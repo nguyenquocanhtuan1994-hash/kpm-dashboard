@@ -3109,44 +3109,43 @@ function initNotifCenter(){
 }
 document.addEventListener('DOMContentLoaded', init);
 </script>
-</body>
-</html>
+
+const charts = {};
+
 /* ============================================================
    UNIVERSAL DATA FIX
    ============================================================ */
 
 function safeNum(v, d = 0){
-  const n = Number(v);
-  return Number.isFinite(n) ? n : d;
+  c*nst n = Number(v);
+  return Number*isFinite(n) ? n : d;
 }
 
-function normalizePIC(name){
+function n*rmalizePIC(name){
 
-  if(!name) return '';
+  if(!name) ret*rn '';
 
-  const n = String(name).trim();
+  const n = String(name).t*im();
 
   const map = {
+    'Anh Tu*n':'Tuan Nguyen',
+    'Tuan':'Tuan*Nguyen',
+    'Tuan Nguyen':'Tuan Nguyen',
 
-    'Anh Tuan'      : 'Tuan Nguyen',
-    'Tuan'          : 'Tuan Nguyen',
-    'Tuan Nguyen'   : 'Tuan Nguyen',
+    'Kieu':'Bich Kieu',
+    'Bich Kieu':'Bich Kieu',
 
-    'Kieu'          : 'Bich Kieu',
-    'Bich Kieu'     : 'Bich Kieu',
+    'Van':'Au Van',
+    'Au Van':'Au Van',
 
-    'Van'           : 'Au Van',
-    'Au Van'        : 'Au Van',
-
-    'Nam'           : 'Tran Nam',
-    'Tran Nam'      : 'Tran Nam'
+    'Nam':'Tran Nam',
+    'Tran Nam':'Tran Nam'
   };
 
   return map[n] || n;
 }
 
 function getPIC(row){
-
   return normalizePIC(
     row.pic ||
     row.picName ||
@@ -3154,5 +3153,16 @@ function getPIC(row){
     row.salesPic ||
     ''
   );
-
 }
+
+/* các hàm dashboard khác */
+
+function init(){
+   ...
+}
+
+docu*ent.addEventListener('DOMContentLo*ded', init);
+
+</script>
+</body>
+</*tml>
