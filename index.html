@@ -1565,8 +1565,8 @@ function generateInsights(){
   const totalFC = sum(rows, r=>r.fcTotal);
 
   // 1. Growth analysis (thay MoM — so sánh Opportunity 2025 vs 2026)
-  const y25 = Object.values(REP_TOTALS).reduce((a,v)=>a+v.opp2025,0);
-  const y26 = Object.values(REP_TOTALS).reduce((a,v)=>a+v.opp2026,0);
+  const y25 = Object.values(REP_TOTALS||{}).reduce((a,v)=>a+safeOpp(v,2025),0);
+  const y26 = Object.values(REP_TOTALS||{}).reduce((a,v)=>a+safeOpp(v,2026),0);
   const growth = y25>0 ? ((y26-y25)/y25*100) : 0;
   out.push({icon:growth>=0?'📈':'📉', type:growth>=0?'success':'danger', title:'Tăng trưởng Opportunity (thay MoM)',
     text:`Opportunity 2026 đạt ${fmtNum(y26,1)} Bio VND, ${growth>=0?'tăng':'giảm'} ${fmtNum(Math.abs(growth),0)}% so với 2025 (${fmtNum(y25,1)} Bio VND). Do dữ liệu chỉ có theo năm, phân tích tăng trưởng theo tháng (MoM) được quy đổi thành YoY.`});
@@ -1650,6 +1650,20 @@ function renderInsights(targetId, insights){
     </div>`).join('');
 }
 
+
+function safeNum(value, fallback = 0){
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+function safeOpp(obj, year){
+  if(!obj) return 0;
+  const candidates=[`opp${year}`,`OPP${year}`,`Opp${year}`,`Opportunity${year}`,`${year}`];
+  for(const key of candidates){
+    if(obj[key]!==undefined && obj[key]!==null && obj[key]!=='') return safeNum(obj[key]);
+  }
+  return 0;
+}
+
 /* ==========================================================================
    TAB 1 — EXECUTIVE OVERVIEW
    ========================================================================== */
@@ -1669,7 +1683,7 @@ function renderTrendChart(){
   const palette = PIC_PALETTE();
   const datasets = (picsInView.length?picsInView:PIC_LIST).map(p=>({
     label: PIC_NAME[p],
-    data: [REP_TOTALS[p].opp2024, REP_TOTALS[p].opp2025, REP_TOTALS[p].opp2026],
+    data: [safeOpp(REP_TOTALS?.[p],2024), safeOpp(REP_TOTALS?.[p],2025), safeOpp(REP_TOTALS?.[p],2026)],
     borderColor: palette[p], backgroundColor: palette[p]+'33',
     tension:.35, fill:false, pointRadius:4, pointBackgroundColor: palette[p], borderWidth:2.5
   }));
