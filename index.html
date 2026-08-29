@@ -3111,3 +3111,48 @@ document.addEventListener('DOMContentLoaded', init);
 </script>
 </body>
 </html>
+/* ============================================================
+   UNIVERSAL DATA FIX
+   ============================================================ */
+
+function safeNum(v, d = 0){
+  const n = Number(v);
+  return Number.isFinite(n) ? n : d;
+}
+
+function normalizePIC(name){
+
+  if(!name) return '';
+
+  const n = String(name).trim();
+
+  const map = {
+
+    'Anh Tuan'      : 'Tuan Nguyen',
+    'Tuan'          : 'Tuan Nguyen',
+    'Tuan Nguyen'   : 'Tuan Nguyen',
+
+    'Kieu'          : 'Bich Kieu',
+    'Bich Kieu'     : 'Bich Kieu',
+
+    'Van'           : 'Au Van',
+    'Au Van'        : 'Au Van',
+
+    'Nam'           : 'Tran Nam',
+    'Tran Nam'      : 'Tran Nam'
+  };
+
+  return map[n] || n;
+}
+
+function getPIC(row){
+
+  return normalizePIC(
+    row.pic ||
+    row.picName ||
+    row.SalesPIC ||
+    row.salesPic ||
+    ''
+  );
+
+}
