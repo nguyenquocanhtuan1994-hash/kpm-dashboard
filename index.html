@@ -4,6 +4,91 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1"/>
 <title>KPM Project Pipeline Management Dashboard 2026</title>
+<!--
+  KPM DASHBOARD — VERSION HISTORY (maintained by the Lead Frontend Architect turn on turn)
+  v1.0  (Turn 12, 2026-08-28) Data-layer migration: hardcoded array -> Google Apps Script + Google Sheets.
+  v1.0.1 (pre-Turn13 manual patch, "index_patched.html") FIX-001: added safeNum()/safeOpp(),
+         removed direct REP_TOTALS[p].opp20xx access that crashed when a rep had no rows for a year.
+  v1.1  (Turn 13, 2026-08-29) — this file. See PATCH-001..003 below (search this file for "PATCH-00").
+         PATCH-001: normalizePIC() — collapses Sales PIC name variants ("Anh Tuan"/"Tuan Nguyen"/"Tuan"
+                    -> canonical "Tuan", etc.) at both ingestion points (Excel import + Google Sheet load),
+                    fixing a FIX-002 regression reintroduced by the Turn 12 architecture migration.
+         PATCH-002: comment add/reply/close now force an immediate re-render of the currently visible
+                    tab (Kanban/table/KPIs), so comment badges update instantly instead of waiting for
+                    the next 10s auto-refresh — strengthens FIX-003/FIX-006.
+         PATCH-003: resolveForecastTotal() — resolves FC 2026 from several possible Google Sheet column
+                    spellings (FC_Total/FC2026/"FC 2026"/Forecast2026/fcTotal) before falling back to
+                    summing FC_Q1..Q4, restoring FIX-004's "auto-resolve forecast columns" intent under
+                    the new schema.
+  v2.0  (Turn 14, 2026-09-01) — PRIMARY OBJECTIVE: TotalPotential (Sika business opportunity value)
+         replaces PipelineValue as the dashboard's primary KPI everywhere — PipelineValue is no longer
+         read by any KPI/chart/table/filter (search "PRIMARY OBJECTIVE" in the app-logic script below).
+         Added: 6-KPI row redefinition (Total Potential Value / Total Forecast 2026 / Active Projects /
+         Sales Engineers / Avg Potential per Project / Forecast Conversion), the SalesPICSummary
+         client-side aggregation model (buildSalesPICSummary()), an expanded filter sidebar (Sector,
+         Location, Status, Stage, TM Category, Potential Range, Forecast Range — alongside the existing
+         Project/Sales PIC filters), a "TM Revenue by Sales PIC" bar chart on the Sales Performance tab,
+         a SalesPIC-aggregated Potential-vs-Forecast bubble chart (bubble size = project count, color =
+         SalesPIC) replacing the old per-project Investment/Pipeline bubble, and a Top 20 Projects by
+         Total Potential table (ProjectName/SalesPIC/Sector/TotalPotential/FC_Total/Forecast Conversion/
+         SalesforceLink) replacing the old Top-10 bar list. Code.gs PROJECTS_HEADERS restructured to the
+         new field spec (TotalPotential, TM*Value, DeveloperOwner, Designer, ResellerBuyer, Opportunity2026,
+         Competitors); old column names kept as a deprecated tail so no historical Sheet data is lost.
+  v2.1  (Turn 15, 2026-09-01) — 1) Removed Stage, Location and Potential Range from the sidebar filter
+         panel per request (kept: Project, Sales PIC, Sector, Status, TM Category, Forecast Range). The
+         underlying stage/location/totalPotential row fields are untouched — still shown in the project
+         modal, table columns, geo tab and pivot table, only the FILTER controls for them were removed.
+         2) loadComments() no longer fails silently: a failed comments fetch now surfaces a toast once
+         (not spammed every 10s poll) instead of only a console.warn — a comment that "goes in but never
+         shows" is now visible as a connectivity error instead of invisible. 3) Added a self-service
+         "🩺 Kiểm tra kết nối" (Test Connection) button to Settings ▸ Kết nối máy chủ that GETs
+         ?action=projects and ?action=comments directly against the URL typed in the box (before saving)
+         and reports row counts plus whether the Sheet's schema is old (PipelineValue) or new
+         (TotalPotential) — turns "báo ghi thành công nhưng Sheet không đổi" from a guessing game into a
+         one-click check the user can run themselves after every redeploy.
+  v2.2  (Turn 15 cont'd, 2026-09-01) — CONFIRMED ROOT CAUSE via a live browser session against the user's
+         actual /exec URL (script.googleusercontent.com echo, real data returned — NOT a 404 as automated
+         fetchers reported): the LIVE deployment is running a Code.gs variant that replies with
+         {success:true/false, count, data} instead of this dashboard's {ok:true/false, data} envelope —
+         i.e. NOT the Code.gs delivered in Turn 14/15. Confirmed the Comments sheet on that live
+         deployment currently has 0 rows. Because apiFetch() only checked `json.ok === false`, a real
+         server-side failure from this envelope shape (`success:false`) was never detected — the
+         dashboard would report "✅ thành công" even when the write did nothing. PATCH-004: apiFetch()
+         now checks both `ok===false` and `success===false`. runApiDiagnostics() (the Settings ▸ Kiểm tra
+         kết nối tool) now also accepts either envelope as "reachable" and explicitly flags a
+         success/count-shaped response as "Code.gs không phải bản mới nhất" instead of misreporting it as
+         a total connection failure (which the v2.1 version of that tool would have done).
+  v2.2b (Turn 15 cont'd, 2026-09-01) — 1) Removed the last remaining sidebar range filter, "Forecast
+         Range" (RANGE_FILTER_IDS now empty — the resetRangeInputs()/initRangeFilters() helpers are kept
+         as no-ops so a range filter can be re-added later without re-plumbing). fcTotal itself is
+         untouched, still shown everywhere it was before. 2) Renamed "Technology Market" to "Target
+         Market" everywhere it appeared (tab label, chart titles, tab subtitle) — display text only, no
+         internal field/variable renaming (TM_FIELDS, TMConcreteValue etc. are unchanged). 3) Added a
+         background color picker (Settings ▸ Màu nền) using a native <input type="color"> — full 16.7M-
+         color picker. The chosen hex becomes the base of a 4-stop diagonal gradient (via CSS
+         color-mix()) that overrides --bg-grad as an inline style on <html>, which wins over both the
+         dark and light :root[data-theme] rules — one override covers both themes and survives the theme
+         toggle. Persisted to localStorage (kpm_pipe_bgcolor_v1); "↺ Mặc định" clears the override back to
+         the original brand-yellow gradient.
+  v2.3  (Turn 15 cont'd, 2026-09-01) — Added a second, separate color tool ("Màu khung / thanh điều
+         hướng") grouped in Settings right under "Màu nền", so the two live together as one "Màu giao
+         diện" section as requested. This one recolors every solid/near-black chrome surface that ISN'T
+         the page background: topbar shell, sidebar, KPI/chart cards, dropdowns, table header and the
+         horizontal tab-bar chips (default/hover/active). Two hardcoded gradients (.topbar and .tabbar
+         .nav-item/:hover/.active) were converted to new CSS vars (--topbar-bg, --tabbar-item-bg,
+         --tabbar-item-hover-bg, --tabbar-item-active-bg — same default values, so nothing changes
+         visually until a color is picked) so they're overridable the same way the existing --glass-bg/
+         --sidebar-bg/--input-bg/--nest-bg/--table-head-bg vars already were. applyPanelColor(hex) derives
+         all ten vars from one picked color via CSS color-mix() — each target keeps its ORIGINAL alpha or
+         light↔dark gradient spread, only the hue changes, so the glass depth effect survives the
+         recolor. Persisted to localStorage (kpm_pipe_panelcolor_v1); verified with a rendered screenshot
+         (background + panel picked to two different colors) confirming both apply correctly together.
+  v2.4  (Turn 15 cont'd, 2026-09-01) — Added a "White → Gray" quick-pick preset row (9 swatches,
+         #FFFFFF down to #303030) under BOTH color tools in Settings ▸ Màu giao diện — a one-click
+         alternative to the full picker for that specific range. Clicking a swatch applies it immediately
+         (same code path as typing a hex or using the native picker) and syncs the hex text field; still
+         only takes effect for real on "Lưu thay đổi" like the rest of this section.
+-->
 <style>
 /* ==========================================================================
    KPM PROJECT PIPELINE MANAGEMENT DASHBOARD 2026 — DESIGN SYSTEM
@@ -41,6 +126,17 @@ html{scroll-behavior:smooth}
   --table-head-bg:#161006;
   --nest-bg:rgba(0,0,0,.26);
   --nest-border:rgba(255,255,255,.10);
+  /* "Panel color" group — every solid/near-black chrome surface that ISN'T
+     already covered by --glass-bg/--sidebar-bg/etc: the topbar shell and
+     the horizontal tab-bar chips (default/hover/active). Kept as separate
+     vars (not hardcoded in the selectors below) purely so the Settings ▸
+     "Màu khung / thanh điều hướng" picker can override all of them at once
+     — see applyPanelColor() in the app-logic script. Defaults below
+     reproduce the original hardcoded look exactly. */
+  --topbar-bg:linear-gradient(120deg,#0b0800 0%,#1d1500 55%,#0b0800 100%);
+  --tabbar-item-bg:linear-gradient(135deg,#241900 0%,#0e0a00 100%);
+  --tabbar-item-hover-bg:linear-gradient(135deg,#2e2100 0%,#120d00 100%);
+  --tabbar-item-active-bg:linear-gradient(135deg,#332400 0%,#140f00 100%);
   --scrollbar:rgba(255,255,255,.18);
   --shadow-pop:0 20px 60px rgba(0,0,0,.5);
   --status-tendering:#90A4AE;
@@ -186,17 +282,17 @@ input,select{font-family:inherit}
   flex:1 1 0;min-width:0;justify-content:center;text-align:center;
   padding:12px 14px;font-size:13px;font-weight:800;letter-spacing:.2px;
   overflow:hidden;text-overflow:ellipsis;
-  background:linear-gradient(135deg,#241900 0%,#0e0a00 100%);
+  background:var(--tabbar-item-bg);
   border:1px solid rgba(238,182,1,.35);
   color:#F2E9CC;
   box-shadow:0 4px 14px rgba(0,0,0,.25);
 }
 .tabbar .nav-item:hover{
-  background:linear-gradient(135deg,#2e2100 0%,#120d00 100%);
+  background:var(--tabbar-item-hover-bg);
   border-color:rgba(238,182,1,.5);color:#FFC93C;
 }
 .tabbar .nav-item.active{
-  background:linear-gradient(135deg,#332400 0%,#140f00 100%);
+  background:var(--tabbar-item-active-bg);
   border-color:rgba(238,182,1,.7);color:#FFC93C;
   box-shadow:0 4px 18px rgba(238,182,1,.3);
 }
@@ -228,6 +324,16 @@ input,select{font-family:inherit}
 .sb-filters .msel-btn{width:100%;justify-content:space-between}
 .sb-filters .msel-pop{left:0;right:0;width:100%;min-width:0}
 .sb-filters .btn-reset{width:100%;text-align:center}
+/* Potential Range / Forecast Range — two plain number inputs per row */
+.sb-range{display:flex;flex-direction:column;gap:4px;padding:2px 4px 4px}
+.sb-range-lbl{font-size:10.5px;font-weight:700;color:var(--text-2)}
+.sb-range-row{display:flex;align-items:center;gap:6px}
+.sb-range-row input{
+  width:0;flex:1 1 0;background:var(--input-bg);border:1px solid var(--glass-border);color:var(--text-1);
+  border-radius:8px;padding:6px 8px;font-size:11.5px;font-weight:600;outline:none;
+}
+.sb-range-row span{font-size:10px;color:var(--text-3)}
+.sb-filters-divider{border-top:1px dashed var(--sidebar-border);margin:6px 2px 2px}
 .sidebar.collapsed .sb-filters{display:none}
 
 .sb-foot{border-top:1px solid var(--sidebar-border);padding-top:12px;margin-top:8px}
@@ -256,7 +362,7 @@ input,select{font-family:inherit}
   display:flex;align-items:center;flex-wrap:wrap;gap:18px;
   margin:14px 20px 0;padding:14px 24px;
   border-radius:20px;
-  background:linear-gradient(120deg,#0b0800 0%,#1d1500 55%,#0b0800 100%);
+  background:var(--topbar-bg);
   border:1px solid rgba(238,182,1,.5);
   box-shadow:0 0 0 1px rgba(238,182,1,.15),0 0 46px rgba(238,182,1,.28),0 10px 30px rgba(0,0,0,.4);
 }
@@ -772,8 +878,10 @@ table.pivot tfoot td{font-weight:800;border-top:2px solid var(--glass-border);bo
     <div class="sb-filters">
       <div class="sb-filters-label">🔎 Bộ lọc</div>
       <div class="msel" id="mselProject"><button class="msel-btn" type="button">Project <span class="msel-count hidden"></span></button><div class="msel-pop hidden"></div></div>
-      <div class="msel" id="mselTM"><button class="msel-btn" type="button">TM <span class="msel-count hidden"></span></button><div class="msel-pop hidden"></div></div>
       <div class="msel" id="mselPic"><button class="msel-btn" type="button">Sales PIC <span class="msel-count hidden"></span></button><div class="msel-pop hidden"></div></div>
+      <div class="msel" id="mselSector"><button class="msel-btn" type="button">Sector <span class="msel-count hidden"></span></button><div class="msel-pop hidden"></div></div>
+      <div class="msel" id="mselStatus"><button class="msel-btn" type="button">Status <span class="msel-count hidden"></span></button><div class="msel-pop hidden"></div></div>
+      <div class="msel" id="mselTM"><button class="msel-btn" type="button">TM Category <span class="msel-count hidden"></span></button><div class="msel-pop hidden"></div></div>
       <button class="btn-reset" id="btnResetFilters">↺ Reset bộ lọc</button>
     </div>
 
@@ -792,28 +900,28 @@ table.pivot tfoot td{font-weight:800;border-top:2px solid var(--glass-border);bo
         <button class="nav-item tabbar-item" type="button" data-tab="team"><span class="tab-ic">👥</span>Hiệu quả Team</button>
         <button class="nav-item tabbar-item" type="button" data-tab="sales"><span class="tab-ic">🎯</span>Hiệu quả Sales</button>
         <button class="nav-item tabbar-item" type="button" data-tab="project"><span class="tab-ic">🗂️</span>Phân tích Dự án</button>
-        <button class="nav-item tabbar-item" type="button" data-tab="product"><span class="tab-ic">🧪</span>Phân tích Sản phẩm</button>
+        <button class="nav-item tabbar-item" type="button" data-tab="product"><span class="tab-ic">🧪</span>Target Market</button>
       </nav>
 
       <!-- KPI ROW (shared across all tabs) -->
       <div class="kpi-row scroll-anchor" id="kpiRow">
-        <div class="card kpi-card"><div class="kpi-top"><div class="kpi-ic">💰</div><div class="kpi-trend up" id="kpiPipelineTrend">—</div></div><div class="kpi-val" id="kpiPipeline">—</div><div class="kpi-lbl">Total Pipeline Value</div><div class="kpi-sub">Bio VND</div></div>
+        <div class="card kpi-card"><div class="kpi-top"><div class="kpi-ic">💰</div><div class="kpi-trend up" id="kpiPotentialTrend">—</div></div><div class="kpi-val" id="kpiPotential">—</div><div class="kpi-lbl">Total Potential Value</div><div class="kpi-sub">TotalPotential · Bio VND</div></div>
         <div class="card kpi-card"><div class="kpi-top"><div class="kpi-ic">📈</div><div class="kpi-trend up" id="kpiForecastTrend">—</div></div><div class="kpi-val" id="kpiForecast">—</div><div class="kpi-lbl">Total Forecast 2026</div><div class="kpi-sub">Bio VND</div></div>
         <div class="card kpi-card"><div class="kpi-top"><div class="kpi-ic">🏗️</div></div><div class="kpi-val" id="kpiActive">—</div><div class="kpi-lbl">Active Projects</div><div class="kpi-sub" id="kpiActiveSub">projects</div></div>
         <div class="card kpi-card"><div class="kpi-top"><div class="kpi-ic">👷</div></div><div class="kpi-val" id="kpiEngineers">—</div><div class="kpi-lbl">Sales Engineers</div><div class="kpi-sub">team members</div></div>
-        <div class="card kpi-card"><div class="kpi-top"><div class="kpi-ic">⚖️</div></div><div class="kpi-val" id="kpiAvg">—</div><div class="kpi-lbl">Avg. Pipeline / Project</div><div class="kpi-sub">Bio VND</div></div>
-        <div class="card kpi-card"><div class="kpi-top"><div class="kpi-ic">🎯</div></div><div class="kpi-val" id="kpiConv">—</div><div class="kpi-lbl">Forecast Conversion</div><div class="kpi-sub">FC 2026 / Pipeline</div></div>
+        <div class="card kpi-card"><div class="kpi-top"><div class="kpi-ic">⚖️</div></div><div class="kpi-val" id="kpiAvg">—</div><div class="kpi-lbl">Avg. Potential / Project</div><div class="kpi-sub">Bio VND</div></div>
+        <div class="card kpi-card"><div class="kpi-top"><div class="kpi-ic">🎯</div></div><div class="kpi-val" id="kpiConv">—</div><div class="kpi-lbl">Forecast Conversion</div><div class="kpi-sub">FC 2026 / Potential</div></div>
       </div>
 
       <!-- ============ TAB 1 — EXECUTIVE OVERVIEW ============ -->
       <div class="tab-panel active" id="tab-overview">
         <div class="grid g-2" style="margin-top:16px">
           <div class="card chart-card scroll-anchor" id="secPipeline">
-            <div class="ch-head"><h4>A · Pipeline / Opportunity Trend (2024–2026)</h4><small>Line Chart</small></div>
+            <div class="ch-head"><h4>A · Opportunity Trend (2024–2026)</h4><small>Line Chart</small></div>
             <div class="chart-wrap"><canvas id="chTrend"></canvas></div>
           </div>
           <div class="card chart-card">
-            <div class="ch-head"><h4>B · Pipeline Allocation by Sales</h4><small>Donut Chart</small></div>
+            <div class="ch-head"><h4>B · Potential Allocation by Sales</h4><small>Donut Chart</small></div>
             <div class="chart-wrap"><canvas id="chAlloc"></canvas></div>
             <div class="legend-row" id="allocLegend"></div>
           </div>
@@ -828,7 +936,7 @@ table.pivot tfoot td{font-weight:800;border-top:2px solid var(--glass-border);bo
             <div class="ch-head"><h4>Forecast Conversion Ratio</h4><small>Gauge</small></div>
             <div class="gauge-wrap">
               <div class="gauge-canvas-wrap"><canvas id="chGauge"></canvas>
-                <div class="gauge-center"><b id="gaugeVal">—</b><span>FC2026 / Pipeline</span></div>
+                <div class="gauge-center"><b id="gaugeVal">—</b><span>FC2026 / Potential</span></div>
               </div>
             </div>
           </div>
@@ -836,7 +944,7 @@ table.pivot tfoot td{font-weight:800;border-top:2px solid var(--glass-border);bo
 
         <div class="grid g-2" style="margin-top:14px">
           <div class="card chart-card" style="min-height:250px">
-            <div class="ch-head"><h4>D · Pipeline by Sector</h4><small>Treemap · Bio VND</small></div>
+            <div class="ch-head"><h4>D · Potential by Sector</h4><small>Treemap · Bio VND</small></div>
             <div class="treemap" id="tmSector"></div>
           </div>
           <div class="card chart-card" style="min-height:250px">
@@ -847,9 +955,12 @@ table.pivot tfoot td{font-weight:800;border-top:2px solid var(--glass-border);bo
         </div>
 
         <div class="grid" style="grid-template-columns:1fr;margin-top:16px">
-          <div class="card chart-card scroll-anchor" id="secTop10" style="min-height:auto">
-            <div class="ch-head"><h4>F · Top 10 Projects by Pipeline Value</h4><small>Horizontal Bar List · Bio VND</small></div>
-            <div class="top10" id="top10List"></div>
+          <div class="card chart-card scroll-anchor" id="secTop20" style="min-height:auto">
+            <div class="ch-head"><h4>F · Top 20 Projects by Total Potential</h4><small>Bio VND · sorted descending</small></div>
+            <div class="table-wrap"><table class="dt" id="top20Table">
+              <thead><tr><th>#</th><th>Project Name</th><th>Sales PIC</th><th>Sector</th><th>Total Potential</th><th>FC 2026</th><th>Forecast Conversion</th><th>Salesforce</th></tr></thead>
+              <tbody></tbody>
+            </table></div>
           </div>
         </div>
 
@@ -866,14 +977,14 @@ table.pivot tfoot td{font-weight:800;border-top:2px solid var(--glass-border);bo
             <div class="chart-wrap"><canvas id="chWaterfall"></canvas></div>
           </div>
           <div class="card chart-card scroll-anchor" id="secGrowth" style="min-height:320px">
-            <div class="ch-head"><h4>Pipeline vs Conversion by Sales PIC</h4><small>Growth Chart · Bar + Line, 2 trục</small></div>
+            <div class="ch-head"><h4>Total Potential vs Conversion by Sales PIC</h4><small>Growth Chart · Bar + Line, 2 trục</small></div>
             <div class="chart-wrap"><canvas id="chGrowth"></canvas></div>
           </div>
         </div>
 
         <div class="grid" style="grid-template-columns:1fr;margin-top:16px">
           <div class="card chart-card scroll-anchor" id="secTeamHeatmap" style="min-height:auto">
-            <div class="ch-head"><h4>Heatmap — Sales PIC × Status</h4><small>Pipeline Value (Bio VND)</small></div>
+            <div class="ch-head"><h4>Heatmap — Sales PIC × Status</h4><small>Total Potential (Bio VND)</small></div>
             <div class="heatmap-wrap"><table class="heatmap" id="heatmapTable"></table></div>
           </div>
         </div>
@@ -888,19 +999,26 @@ table.pivot tfoot td{font-weight:800;border-top:2px solid var(--glass-border);bo
 
         <div class="grid g-2" style="margin-top:16px">
           <div class="card chart-card scroll-anchor" id="secTeamBar">
-            <div class="ch-head"><h4>Pipeline vs Forecast by Sales PIC</h4><small>Bio VND</small></div>
+            <div class="ch-head"><h4>Total Potential vs Forecast by Sales PIC</h4><small>Bio VND</small></div>
             <div class="chart-wrap"><canvas id="chTeamBar"></canvas></div>
           </div>
           <div class="card chart-card scroll-anchor" id="secTeamRadar">
-            <div class="ch-head"><h4>Technology Market Mix by Sales PIC</h4><small>% of each rep's TM value · radar</small></div>
+            <div class="ch-head"><h4>Target Market Mix by Sales PIC</h4><small>% of each rep's TM value · radar</small></div>
             <div class="chart-wrap"><canvas id="chTeamRadar"></canvas></div>
+          </div>
+        </div>
+
+        <div class="grid" style="grid-template-columns:1fr;margin-top:16px">
+          <div class="card chart-card scroll-anchor" id="secTmRevenue">
+            <div class="ch-head"><h4>TM Revenue by Sales PIC</h4><small>SalesPICSummary.TMTotal · Bio VND · sorted descending</small></div>
+            <div class="chart-wrap"><canvas id="chTmRevenue"></canvas></div>
           </div>
         </div>
 
         <div class="section-head scroll-anchor" id="secLeaderboardTable"><h3>Leaderboard chi tiết</h3><span id="teamTableCount"></span></div>
         <div class="card card-pad table-wrap">
           <table class="dt" id="teamTable">
-            <thead><tr><th>Sales PIC</th><th># Projects</th><th>Pipeline (Bio VND)</th><th>FC 2026 (Bio VND)</th><th>Conversion</th><th>Top Sector</th><th>Status Mix</th></tr></thead>
+            <thead><tr><th>Sales PIC</th><th># Projects</th><th>Total Potential (Bio VND)</th><th>FC 2026 (Bio VND)</th><th>Conversion</th><th>Top Sector</th><th>Status Mix</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -926,7 +1044,7 @@ table.pivot tfoot td{font-weight:800;border-top:2px solid var(--glass-border);bo
         <div class="subview" id="sub-geo">
           <div class="grid g-2">
             <div class="card chart-card" style="min-height:520px">
-              <div class="ch-head"><h4>Pipeline Value by Location</h4><small>Horizontal Bar List · Bio VND</small></div>
+              <div class="ch-head"><h4>Total Potential by Location</h4><small>Horizontal Bar List · Bio VND</small></div>
               <div id="geoList" style="overflow-y:auto;flex:1"></div>
             </div>
             <div class="card chart-card" style="min-height:520px">
@@ -939,7 +1057,7 @@ table.pivot tfoot td{font-weight:800;border-top:2px solid var(--glass-border);bo
         <div class="subview" id="sub-risk">
           <div class="grid" style="grid-template-columns:1fr">
             <div class="card chart-card" style="min-height:420px">
-              <div class="ch-head"><h4>Opportunity Bubble Map</h4><small>X: Total Investment · Y: Pipeline Value · Bubble: FC 2026 · Màu: Sector</small></div>
+              <div class="ch-head"><h4>Potential vs Forecast — by Sales PIC</h4><small>X: TotalPotential · Y: FC_Total · Bubble size: Project Count · Bubble color: SalesPIC</small></div>
               <div class="chart-wrap"><canvas id="chBubble"></canvas></div>
             </div>
           </div>
@@ -949,7 +1067,7 @@ table.pivot tfoot td{font-weight:800;border-top:2px solid var(--glass-border);bo
               <div class="chart-wrap"><canvas id="chCompetitor"></canvas></div>
             </div>
             <div class="card chart-card">
-              <div class="ch-head"><h4>Forecast Conversion by Sector</h4><small>FC 2026 / Pipeline Value</small></div>
+              <div class="ch-head"><h4>Forecast Conversion by Sector</h4><small>FC 2026 / Total Potential</small></div>
               <div class="chart-wrap"><canvas id="chConversion"></canvas></div>
             </div>
           </div>
@@ -957,7 +1075,7 @@ table.pivot tfoot td{font-weight:800;border-top:2px solid var(--glass-border);bo
 
         <div class="subview" id="sub-pareto">
           <div class="card chart-card" style="min-height:420px">
-            <div class="ch-head"><h4>Pareto 80/20 — Dự án theo giá trị Pipeline</h4><small>Pareto Chart · Bar + Cumulative % Line</small></div>
+            <div class="ch-head"><h4>Pareto 80/20 — Dự án theo Total Potential</h4><small>Pareto Chart · Bar + Cumulative % Line</small></div>
             <div class="chart-wrap"><canvas id="chPareto"></canvas></div>
           </div>
         </div>
@@ -1005,7 +1123,7 @@ table.pivot tfoot td{font-weight:800;border-top:2px solid var(--glass-border);bo
                 <th data-k="id">No</th><th data-k="picName">Sales PIC</th><th data-k="name">Project Name</th>
                 <th data-k="sector">Sector</th><th data-k="location">Location</th><th data-k="owner">Owner</th>
                 <th data-k="mainContractor">Main Contractor</th><th data-k="timeline">Timeline</th>
-                <th data-k="statusBucket">Status</th><th data-k="potentialValue">Pipeline Value</th>
+                <th data-k="statusBucket">Status</th><th data-k="totalPotential">Total Potential</th>
                 <th data-k="fcTotal">FC 2026</th><th data-k="competitor">Competitor</th>
                 <th data-k="commentStatus">Comment Status</th><th data-k="openComments">Open Comments</th><th data-k="dueDate">Due Date</th>
               </tr></thead>
@@ -1022,11 +1140,11 @@ table.pivot tfoot td{font-weight:800;border-top:2px solid var(--glass-border);bo
 
         <div class="grid g-2 scroll-anchor" id="secProductMix" style="margin-top:16px">
           <div class="card chart-card">
-            <div class="ch-head"><h4>Technology Market — Tổng giá trị theo nhóm sản phẩm</h4><small>Bio VND</small></div>
+            <div class="ch-head"><h4>Target Market Value by Category</h4><small>Horizontal Bar · Bio VND</small></div>
             <div class="chart-wrap"><canvas id="chProductBar"></canvas></div>
           </div>
           <div class="card chart-card">
-            <div class="ch-head"><h4>Phân bổ TM theo nhóm</h4><small>Donut · Bio VND</small></div>
+            <div class="ch-head"><h4>TM Mix Distribution</h4><small>Donut · Bio VND</small></div>
             <div class="chart-wrap"><canvas id="chProductDonut"></canvas></div>
             <div class="legend-row" id="productLegend"></div>
           </div>
@@ -1034,7 +1152,7 @@ table.pivot tfoot td{font-weight:800;border-top:2px solid var(--glass-border);bo
 
         <div class="grid" style="grid-template-columns:1fr;margin-top:16px">
           <div class="card chart-card scroll-anchor" id="secProductHeatmap" style="min-height:auto">
-            <div class="ch-head"><h4>Heatmap — Sales PIC × Nhóm sản phẩm (TM)</h4><small>Bio VND</small></div>
+            <div class="ch-head"><h4>Sales PIC × Target Market Heatmap</h4><small>Low → High · Bio VND</small></div>
             <div class="heatmap-wrap"><table class="heatmap" id="productHeatmap"></table></div>
           </div>
         </div>
@@ -1122,8 +1240,56 @@ function growDynamicLists(rows){
     if(r.statusBucket && STATUS_LIST.indexOf(r.statusBucket)===-1) STATUS_LIST.push(r.statusBucket);
   });
 }
+
+/* PATCH-001 (FIX-002 regression fix) ======================================
+   The Turn 12 data-layer migration reads the Sales PIC code straight off
+   the Excel sheet name (parseWorkbook: pic: sn) or the Google Sheet's
+   SalesPIC column (mapApiRowToInternal), with no normalization. Whoever
+   types the sheet name / cell value decides the code, so "Tuan", "Anh
+   Tuan" and "Tuan Nguyen" — same person, three spellings — each become a
+   DIFFERENT entry in PIC_LIST via growDynamicLists(), which then shows up
+   as 3 separate rows in every filter, chart and Kanban column. This is
+   the exact bug FIX-002 already fixed once (in the pre-GAS hardcoded-array
+   build); the migration dropped the normalizer when the data layer was
+   rewritten. normalizePIC() restores it and is called from BOTH ingestion
+   points (see PATCH-001 call sites below), so filters/charts/Kanban/table
+   share one normalized source again (FIX-005's requirement).
+   PIC_ALIASES is intentionally an explicit table, not a fuzzy substring
+   match: a fuzzy "contains 'nam'" rule would wrongly merge a brand-new
+   Sales PIC whose name happens to contain "Nam" into the existing "Nam"
+   bucket. Extend this table (lower-case, diacritics-free keys) whenever a
+   new naming variant for an existing rep shows up in the sheet. Anything
+   NOT in the table falls through unchanged and is grown into PIC_LIST as
+   its own new rep by growDynamicLists() — new reps are never silently
+   merged into an existing one. */
+const PIC_ALIASES = {
+  'tuan':'Tuan', 'anh tuan':'Tuan', 'tuan nguyen':'Tuan', 'nguyen tuan':'Tuan',
+  'kieu':'Kieu', 'bich kieu':'Kieu', 'kieu bich':'Kieu',
+  'van':'Van', 'au van':'Van', 'van au':'Van',
+  'nam':'Nam', 'tran nam':'Nam', 'nam tran':'Nam'
+};
+function stripDiacritics(s){
+  try{ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
+  catch(e){ return String(s||''); } // very old browsers without String#normalize — fall back to raw string
+}
+function normalizePIC(raw){
+  const s = stripDiacritics(raw).trim().toLowerCase().replace(/\s+/g,' ');
+  if(!s) return 'Unassigned';
+  if(PIC_ALIASES[s]) return PIC_ALIASES[s];
+  // Not a known alias — check whether it's already an existing canonical
+  // code or display name (case/diacritics-insensitive) before treating it
+  // as a brand-new Sales PIC.
+  for(const code of PIC_LIST){
+    if(s === stripDiacritics(code).toLowerCase()) return code;
+    if(PIC_NAME[code] && s === stripDiacritics(PIC_NAME[code]).toLowerCase()) return code;
+  }
+  return String(raw).trim();
+}
 const STATUS_CLASS = {'Tendering':'b-tendering','Ground Breaking':'b-ground','Contract Awarded':'b-contract','Construction':'b-construction','Completed':'b-completed','Delayed':'b-delayed'};
-const TM_FIELDS = [['concrete','Concrete'],['waterproofing','Waterproofing'],['roofing','Roofing'],['flooring','Flooring'],['buildingFinish','Building Finish'],['sealing','Sealing'],['refurbish','Refurbishment'],['ai','Infrastructure']];
+/* Category labels match the spec's "Available TM Categories" exactly:
+   Concrete / Waterproofing / Roofing / Flooring / Building Finishing /
+   Sealing & Bonding / Refurbishment / A&I. */
+const TM_FIELDS = [['concrete','Concrete'],['waterproofing','Waterproofing'],['roofing','Roofing'],['flooring','Flooring'],['buildingFinish','Building Finishing'],['sealing','Sealing & Bonding'],['refurbish','Refurbishment'],['ai','A&I']];
 const TM_LABEL = Object.fromEntries(TM_FIELDS);
 
 const LS_DATA_KEY = 'kpm_pipe_data_v1';
@@ -1131,6 +1297,8 @@ const LS_THEME_KEY = 'kpm_pipe_theme_v1';
 const LS_TITLE_KEY = 'kpm_pipe_title_v1';
 const LS_SUBTITLE_KEY = 'kpm_pipe_subtitle_v1';
 const LS_SHINE_KEY = 'kpm_pipe_shine_v1';
+const LS_BGCOLOR_KEY = 'kpm_pipe_bgcolor_v1';
+const LS_PANELCOLOR_KEY = 'kpm_pipe_panelcolor_v1';
 const LS_SIDEBAR_KEY = 'kpm_pipe_sidebar_collapsed_v1';
 const LS_PWD_KEY = 'kpm_dashboard_password';
 const DEFAULT_PASSWORD = 'KPM@2026';
@@ -1217,11 +1385,22 @@ let LAST_LOAD_AT = null;
 let _refreshTimer = null;
 let currentTab = 'overview';
 let currentProjectSub = 'stage';
-let filterState = { pic:new Set(), project:new Set(), tm:new Set() };
+/* FILTER PANEL — filter dimensions: SalesPIC, Sector, Status, TM Category
+   (+ the pre-existing free-text Project filter). Stage, Location, Potential
+   Range and Forecast Range were removed from the UI per request;
+   location/stage/fcTotal data fields are kept on each row (still used by
+   the table, modal and geo tab) — only the filter controls were dropped. */
+function emptyFilterState(){
+  return {
+    pic:new Set(), project:new Set(), tm:new Set(),
+    sector:new Set(), status:new Set()
+  };
+}
+let filterState = emptyFilterState();
 const mselRefreshers = [];
 let dirty = { overview:true, team:true, sales:true, product:true,
   projectSub:{ stage:true, geo:true, risk:true, pareto:true, pivot:true, db:true } };
-let dbSort = {key:'potentialValue', dir:'desc'};
+let dbSort = {key:'totalPotential', dir:'desc'};
 let dbPage = 1;
 let dbPageSize = 12; /* user-adjustable via #dbPageSize select (12/25/30/35/40) */
 let dbSearchQuery = ''; /* local search box for the Database table only — filters
@@ -1248,6 +1427,38 @@ function cssVar(name){ return getComputedStyle(document.documentElement).getProp
 function fmtNum(n,d){ d = d===undefined?1:d; if(n===null||n===undefined||isNaN(n)) return '0'; return Number(n).toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:d}); }
 function sum(arr,fn){ return arr.reduce((a,r)=>a+(Number(fn(r))||0),0); }
 function groupBy(arr,fn){ const m={}; arr.forEach(r=>{ const k=fn(r); (m[k]=m[k]||[]).push(r); }); return m; }
+
+/* ==========================================================================
+   SALESPICSUMMARY — client-side aggregation model (GROUP BY SalesPIC)
+   ==========================================================================
+   Output columns, per spec: SalesPIC, TMConcrete, TMWaterproofing, TMRoofing,
+   TMFlooring, TMBuildingFinishing, TMSealingBonding, TMRefurbishment, TMAI,
+   TMTotal, TotalPotential, FC_Total.
+   TMTotal = TMConcrete + TMWaterproofing + TMRoofing + TMFlooring +
+             TMBuildingFinishing + TMSealingBonding + TMRefurbishment + TMAI
+   One row per Sales PIC that has at least one project in `rows`. Every
+   chart/table on the Target Market and Sales Performance tabs that
+   needs a per-rep TM breakdown reads from this single function so the
+   numbers can never drift apart between charts. */
+const TM_SUMMARY_KEY = { concrete:'TMConcrete', waterproofing:'TMWaterproofing', roofing:'TMRoofing', flooring:'TMFlooring', buildingFinish:'TMBuildingFinishing', sealing:'TMSealingBonding', refurbish:'TMRefurbishment', ai:'TMAI' };
+function buildSalesPICSummary(rows){
+  const byPic = groupBy(rows, r=>r.pic);
+  const picsInView = PIC_LIST.filter(p=> (byPic[p]||[]).length>0);
+  return picsInView.map(p=>{
+    const picRows = byPic[p]||[];
+    const out = { SalesPIC: p, SalesPICName: PIC_NAME[p]||p, projectCount: picRows.length };
+    let tmTotal = 0;
+    TM_FIELDS.forEach(([key])=>{
+      const v = sum(picRows, r=>r.tm[key]);
+      out[TM_SUMMARY_KEY[key]] = v;
+      tmTotal += v;
+    });
+    out.TMTotal = tmTotal;
+    out.TotalPotential = sum(picRows, r=>r.totalPotential);
+    out.FC_Total = sum(picRows, r=>r.fcTotal);
+    return out;
+  });
+}
 /* Merge long-tail slices under minSharePct of the total into one "Khác"
    bucket. A doughnut chart draws a 2px border around every slice; when
    several categories are each under ~1° wide (e.g. a handful of minor
@@ -1353,7 +1564,7 @@ const TAB_TITLES = {
   team:['Hiệu quả Team','Team Performance Analytics'],
   sales:['Hiệu quả Sales','Sales Performance Analytics'],
   project:['Phân tích Dự án','Project Intelligence Dashboard'],
-  product:['Phân tích Sản phẩm','Product Performance Analytics']
+  product:['Target Market','Target Market Performance Analytics']
 };
 function switchTab(tab){
   currentTab = tab;
@@ -1476,6 +1687,12 @@ function initFilterOptions(){
   buildMultiSelect('mselProject', ()=> Array.from(new Set(DATA.map(r=>r.name))).sort((a,b)=>a.localeCompare(b)), n=>n, 'project', {searchable:true});
   // TM dropdown gets "Chọn tất cả / Bỏ chọn tất cả" pinned to the top.
   buildMultiSelect('mselTM', TM_FIELDS.map(f=>f[0]), key=> TM_LABEL[key]||key, 'tm', {actionsPosition:'top'});
+  // FILTER PANEL dimensions — Sector / Status (Location, Stage and
+  // Potential Range were removed from the filter UI per request; the
+  // underlying row fields are untouched and still used elsewhere).
+  // Sector and Status use the dynamic (growDynamicLists-fed) fixed lists.
+  buildMultiSelect('mselSector', ()=>SECTOR_LIST, s=>s, 'sector');
+  buildMultiSelect('mselStatus', ()=>STATUS_LIST, s=>s, 'status');
   document.addEventListener('click', (e)=>{
     // composedPath() is a snapshot taken at dispatch time, so it stays
     // correct even if a handler earlier in the bubble phase mutated the
@@ -1485,13 +1702,40 @@ function initFilterOptions(){
     document.querySelectorAll('.msel').forEach(root=>{ if(!path.includes(root)) root.querySelector('.msel-pop').classList.add('hidden'); });
   });
 }
+/* Potential Range and Forecast Range (the sidebar's two range-input
+   filters) were both removed per request — RANGE_FILTER_IDS is kept as an
+   empty object (rather than deleting resetRangeInputs/initRangeFilters
+   outright) so a future range filter can be re-added here without
+   touching the rest of the filter pipeline; both functions below are
+   already no-ops over an empty object. */
+const RANGE_FILTER_IDS = {};
+function resetRangeInputs(){
+  Object.values(RANGE_FILTER_IDS).forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
+}
+let _rangeDebounce = null;
+function initRangeFilters(){
+  Object.entries(RANGE_FILTER_IDS).forEach(([stateKey, id])=>{
+    const el = document.getElementById(id);
+    if(!el) return;
+    el.addEventListener('input', ()=>{
+      clearTimeout(_rangeDebounce);
+      _rangeDebounce = setTimeout(()=>{
+        const v = el.value.trim();
+        filterState[stateKey] = v==='' ? null : Number(v);
+        onFiltersChanged();
+      }, 350);
+    });
+  });
+}
 function initFilterEvents(){
   document.getElementById('btnResetFilters').addEventListener('click', ()=>{
-    filterState = { pic:new Set(), project:new Set(), tm:new Set() };
+    filterState = emptyFilterState();
+    resetRangeInputs();
     mselRefreshers.forEach(fn=>fn());
     hideDrillCrumb();
     onFiltersChanged();
   });
+  initRangeFilters();
 }
 function computeFiltered(){
   FILTERED = DATA.filter(r=>{
@@ -1501,6 +1745,8 @@ function computeFiltered(){
       const hasSelectedTM = Array.from(filterState.tm).some(key=> r.tm && Number(r.tm[key])>0);
       if(!hasSelectedTM) return false;
     }
+    if(filterState.sector.size && !filterState.sector.has(r.sector)) return false;
+    if(filterState.status.size && !filterState.status.has(r.statusBucket)) return false;
     return true;
   });
 }
@@ -1514,7 +1760,8 @@ function onFiltersChanged(){
 
 /* ---------------- drill-down (Sales → Project) ---------------- */
 function drillToPic(pic){
-  filterState = { pic:new Set([pic]), project:new Set(), tm:new Set() };
+  filterState = Object.assign(emptyFilterState(), { pic:new Set([pic]) });
+  resetRangeInputs();
   mselRefreshers.forEach(fn=>fn());
   computeFiltered(); renderKPIs(); markAllDirty(); dbPage=1;
   switchTab('project');
@@ -1526,7 +1773,8 @@ function showDrillCrumb(html){
   el.innerHTML = html + ` <span class="clear" id="clearDrillBtn">✕ Bỏ lọc</span>`;
   el.classList.remove('hidden');
   document.getElementById('clearDrillBtn').addEventListener('click', ()=>{
-    filterState = { pic:new Set(), project:new Set(), tm:new Set() };
+    filterState = emptyFilterState();
+    resetRangeInputs();
     mselRefreshers.forEach(fn=>fn());
     hideDrillCrumb();
     onFiltersChanged();
@@ -1534,24 +1782,32 @@ function showDrillCrumb(html){
 }
 function hideDrillCrumb(){ document.getElementById('drillCrumb').classList.add('hidden'); }
 
-/* ---------------- KPI row ---------------- */
+/* ---------------- KPI row ----------------
+   Redefined per the PRIMARY OBJECTIVE: TotalPotential (Sika business
+   opportunity value) is the primary KPI. PipelineValue is no longer read
+   anywhere in this file — see resolveTotalPotential() / mapApiRowToInternal().
+   KPI1 Total Potential Value   = SUM(TotalPotential)
+   KPI2 Total Forecast 2026     = SUM(FC_Total)
+   KPI3 Active Projects         = COUNT(ProjectID)  [all rows currently in view]
+   KPI4 Sales Engineers         = COUNT DISTINCT SalesPIC
+   KPI5 Avg Potential / Project = SUM(TotalPotential) / ActiveProjects
+   KPI6 Forecast Conversion     = SUM(FC_Total) / SUM(TotalPotential) */
 function renderKPIs(){
-  const totalPipeline = sum(FILTERED, r=>r.potentialValue);
+  const totalPotential = sum(FILTERED, r=>r.totalPotential);
   const totalFc = sum(FILTERED, r=>r.fcTotal);
-  const activeStatuses = ['Tendering','Ground Breaking','Contract Awarded','Construction'];
-  const active = FILTERED.filter(r=> activeStatuses.indexOf(r.statusBucket)!==-1).length;
-  const engineers = new Set(FILTERED.map(r=>r.pic)).size || 0;
-  const avgPipeline = FILTERED.length ? totalPipeline/FILTERED.length : 0;
-  const conv = totalPipeline>0 ? (totalFc/totalPipeline*100) : 0;
+  const activeProjects = FILTERED.length; // COUNT(ProjectID)
+  const engineers = new Set(FILTERED.map(r=>r.pic)).size;
+  const avgPotential = activeProjects ? totalPotential/activeProjects : 0;
+  const conv = totalPotential>0 ? (totalFc/totalPotential*100) : 0;
 
-  document.getElementById('kpiPipeline').textContent = fmtNum(totalPipeline,1);
+  document.getElementById('kpiPotential').textContent = fmtNum(totalPotential,1);
   document.getElementById('kpiForecast').textContent = fmtNum(totalFc,1);
-  document.getElementById('kpiActive').textContent = active;
-  document.getElementById('kpiActiveSub').textContent = FILTERED.length + ' total in view';
-  document.getElementById('kpiEngineers').textContent = engineers || PIC_LIST.length;
-  document.getElementById('kpiAvg').textContent = fmtNum(avgPipeline,1);
+  document.getElementById('kpiActive').textContent = activeProjects;
+  document.getElementById('kpiActiveSub').textContent = 'projects (COUNT ProjectID)';
+  document.getElementById('kpiEngineers').textContent = engineers;
+  document.getElementById('kpiAvg').textContent = fmtNum(avgPotential,1);
   document.getElementById('kpiConv').textContent = fmtNum(conv,1) + '%';
-  document.getElementById('kpiPipelineTrend').style.display='none';
+  document.getElementById('kpiPotentialTrend').style.display='none';
   document.getElementById('kpiForecastTrend').style.display='none';
 }
 
@@ -1561,7 +1817,7 @@ function renderKPIs(){
 function generateInsights(){
   const rows = FILTERED;
   const out = [];
-  const totalPV = sum(rows, r=>r.potentialValue);
+  const totalPV = sum(rows, r=>r.totalPotential);
   const totalFC = sum(rows, r=>r.fcTotal);
 
   // 1. Growth analysis (thay MoM — so sánh Opportunity 2025 vs 2026)
@@ -1581,15 +1837,15 @@ function generateInsights(){
     text:`${fmtNum(qtdPct,0)}% forecast 2026 (${fmtNum(elapsedSum,1)}/${fmtNum(totalFC,1)} Bio VND) đã nằm trong kế hoạch Q1–Q${curQ}. Còn ${fmtNum(totalFC-elapsedSum,1)} Bio VND ở các quý sau cần theo dõi tiến độ chốt.`});
 
   // 3. Pareto 80/20
-  const sorted = rows.slice().sort((a,b)=>b.potentialValue-a.potentialValue);
+  const sorted = rows.slice().sort((a,b)=>b.totalPotential-a.totalPotential);
   let acc=0, n=0;
-  for(const r of sorted){ acc+=r.potentialValue; n++; if(acc>=totalPV*0.8) break; }
+  for(const r of sorted){ acc+=r.totalPotential; n++; if(acc>=totalPV*0.8) break; }
   out.push({icon:'📊', type:'warning', title:'Pareto 80/20',
     text:`${n}/${rows.length} dự án (${fmtNum(rows.length?n/rows.length*100:0,0)}%) đang chiếm 80% tổng giá trị pipeline (${fmtNum(totalPV,1)} Bio VND). Ưu tiên nguồn lực vào nhóm dự án trọng điểm này.`});
 
   // 4. Owner concentration risk (thay khách hàng)
   const byOwner = groupBy(rows.filter(r=>r.owner), r=>r.owner);
-  const ownerEntries = Object.entries(byOwner).map(([o,list])=>[o, sum(list,r=>r.potentialValue)]).sort((a,b)=>b[1]-a[1]);
+  const ownerEntries = Object.entries(byOwner).map(([o,list])=>[o, sum(list,r=>r.totalPotential)]).sort((a,b)=>b[1]-a[1]);
   if(ownerEntries.length){
     const [topOwner, topVal] = ownerEntries[0];
     const share = totalPV>0? topVal/totalPV*100:0;
@@ -1600,20 +1856,20 @@ function generateInsights(){
   // 5 & 6. Best / worst sales by conversion
   const byPic = groupBy(rows, r=>r.pic);
   const picConv = PIC_LIST.filter(p=>byPic[p]&&byPic[p].length).map(p=>{
-    const pv = sum(byPic[p],r=>r.potentialValue), fc = sum(byPic[p],r=>r.fcTotal);
+    const pv = sum(byPic[p],r=>r.totalPotential), fc = sum(byPic[p],r=>r.fcTotal);
     return {p, conv: pv>0? fc/pv*100:0, pv, fc};
   }).sort((a,b)=>b.conv-a.conv);
   if(picConv.length){
     const best = picConv[0], worst = picConv[picConv.length-1];
     out.push({icon:'🏆', type:'success', title:'Sales tăng trưởng tốt nhất',
-      text:`${PIC_NAME[best.p]} dẫn đầu về tỷ lệ chuyển đổi forecast với ${fmtNum(best.conv,0)}% (FC ${fmtNum(best.fc,1)}/Pipeline ${fmtNum(best.pv,1)} Bio VND).`});
+      text:`${PIC_NAME[best.p]} dẫn đầu về tỷ lệ chuyển đổi forecast với ${fmtNum(best.conv,0)}% (FC ${fmtNum(best.fc,1)}/Potential ${fmtNum(best.pv,1)} Bio VND).`});
     if(picConv.length>1) out.push({icon:'🔻', type:'danger', title:'Sales cần hỗ trợ nhiều nhất',
-      text:`${PIC_NAME[worst.p]} có tỷ lệ chuyển đổi thấp nhất team, ${fmtNum(worst.conv,0)}% (FC ${fmtNum(worst.fc,1)}/Pipeline ${fmtNum(worst.pv,1)} Bio VND). Cần rà soát các dự án bị chậm/Delayed.`});
+      text:`${PIC_NAME[worst.p]} có tỷ lệ chuyển đổi thấp nhất team, ${fmtNum(worst.conv,0)}% (FC ${fmtNum(worst.fc,1)}/Potential ${fmtNum(worst.pv,1)} Bio VND). Cần rà soát các dự án bị chậm/Delayed.`});
   }
 
   // 7. Leading project group (sector)
   const bySector = groupBy(rows, r=>r.sector);
-  const sectorEntries = SECTOR_LIST.map(s=>[s, sum(bySector[s]||[],r=>r.potentialValue)]).filter(x=>x[1]>0).sort((a,b)=>b[1]-a[1]);
+  const sectorEntries = SECTOR_LIST.map(s=>[s, sum(bySector[s]||[],r=>r.totalPotential)]).filter(x=>x[1]>0).sort((a,b)=>b[1]-a[1]);
   if(sectorEntries.length){
     const [topS, topSV] = sectorEntries[0];
     out.push({icon:'🎯', type:'info', title:'Nhóm dự án dẫn đầu',
@@ -1675,7 +1931,7 @@ function renderOverview(){
   renderGaugeChart();
   renderSectorTreemap();
   renderStatusChart();
-  renderTop10();
+  renderTop20();
 }
 function renderTrendChart(){
   const years = ['2024','2025','2026'];
@@ -1699,7 +1955,7 @@ function renderAllocChart(){
   const byPic = groupBy(FILTERED, r=>r.pic);
   const labels = Object.keys(byPic);
   const palette = PIC_PALETTE();
-  const values = labels.map(k=> sum(byPic[k], r=>r.potentialValue));
+  const values = labels.map(k=> sum(byPic[k], r=>r.totalPotential));
   const allocItems = groupMinor(labels.map((l,i)=>({key:l, label:PIC_NAME[l]||l, value:values[i], color:palette[l]||'#999'})), 1.5);
   destroyChart('alloc');
   charts.alloc = new Chart(document.getElementById('chAlloc'), {
@@ -1728,7 +1984,7 @@ function renderQuarterChart(){
   });
 }
 function renderGaugeChart(){
-  const totalPV = sum(FILTERED,r=>r.potentialValue), totalFC = sum(FILTERED,r=>r.fcTotal);
+  const totalPV = sum(FILTERED,r=>r.totalPotential), totalFC = sum(FILTERED,r=>r.fcTotal);
   const pct = totalPV>0 ? Math.min(100, totalFC/totalPV*100) : 0;
   const color = pct>=35 ? cssVar('--status-completed') : pct>=20 ? cssVar('--brand') : cssVar('--status-delayed');
   destroyChart('gauge');
@@ -1745,7 +2001,7 @@ const SECTOR_ABBR = { 'Power Plant':'Power', 'Others':'Other' };
 function sectorLabel(name, compact){ return compact ? (SECTOR_ABBR[name] || name) : name; }
 function renderSectorTreemap(){
   const bySector = groupBy(FILTERED, r=>r.sector);
-  const items = SECTOR_LIST.map(s=>({ name:s, value: sum(bySector[s]||[], r=>r.potentialValue) }))
+  const items = SECTOR_LIST.map(s=>({ name:s, value: sum(bySector[s]||[], r=>r.totalPotential) }))
     .filter(x=>x.value>0).sort((a,b)=>b.value-a.value);
   const el = document.getElementById('tmSector');
   const total = items.reduce((a,b)=>a+b.value,0) || 1;
@@ -1786,22 +2042,30 @@ function renderStatusChart(){
   document.getElementById('statusLegend').innerHTML = statusItems.map(t=>
     `<span><span class="legend-dot" style="background:${t.color}"></span>${t.label} — ${t.value} dự án</span>`).join('');
 }
-function renderTop10(){
-  const top = FILTERED.slice().sort((a,b)=>b.potentialValue-a.potentialValue).slice(0,10);
-  const max = top.length? top[0].potentialValue : 1;
-  const el = document.getElementById('top10List');
-  if(!top.length){ el.innerHTML = '<div class="chart-empty">Không có dữ liệu phù hợp bộ lọc</div>'; return; }
-  el.innerHTML = top.map((r,i)=>`
-    <div class="top10-row" data-id="${r.id}">
-      <div class="top10-rank">#${i+1}</div>
-      <div>
-        <div class="top10-name">${esc(r.name)}</div>
-        <div class="top10-sub">${esc(PIC_NAME[r.pic]||r.pic)} · ${esc(r.sector)} · ${esc(r.location)}</div>
-        <div class="top10-bar"><i style="width:${(r.potentialValue/max*100).toFixed(1)}%"></i></div>
-      </div>
-      <div class="top10-val">${fmtNum(r.potentialValue,1)}<br><span style="font-size:9.5px;color:var(--text-3);font-weight:600">Bio VND</span></div>
-    </div>`).join('');
-  el.querySelectorAll('.top10-row').forEach(row=> row.addEventListener('click', ()=> openProjectModal(row.getAttribute('data-id'))));
+/* TOP PROJECT TABLE — Top 20 Projects by Total Potential, per spec columns:
+   ProjectName, SalesPIC, Sector, TotalPotential, FC_Total, Forecast
+   Conversion, SalesforceLink. */
+function renderTop20(){
+  const top = FILTERED.slice().sort((a,b)=>b.totalPotential-a.totalPotential).slice(0,20);
+  const tbody = document.querySelector('#top20Table tbody');
+  if(!top.length){ tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--text-3)">Không có dữ liệu phù hợp bộ lọc</td></tr>`; return; }
+  tbody.innerHTML = top.map((r,i)=>{
+    const conv = r.totalPotential>0 ? (r.fcTotal/r.totalPotential*100) : 0;
+    return `<tr data-id="${r.id}">
+      <td>${i+1}</td>
+      <td title="${esc(r.name)}">${esc(r.name)}</td>
+      <td>${esc(PIC_NAME[r.pic]||r.pic)}</td>
+      <td>${esc(r.sector)}</td>
+      <td style="color:var(--brand);font-weight:800">${fmtNum(r.totalPotential,1)}</td>
+      <td>${fmtNum(r.fcTotal,1)}</td>
+      <td>${fmtNum(conv,1)}%</td>
+      <td>${r.salesforceLink?`<a href="${esc(r.salesforceLink)}" target="_blank" rel="noopener" data-nav="1">☁️ Open ↗</a>`:'—'}</td>
+    </tr>`;
+  }).join('');
+  tbody.querySelectorAll('tr').forEach(row=> row.addEventListener('click', (e)=>{
+    if(e.target.closest('a[data-nav]')) return; // let the Salesforce link navigate, don't open the project modal underneath it
+    openProjectModal(row.getAttribute('data-id'));
+  }));
 }
 
 /* ==========================================================================
@@ -1839,12 +2103,12 @@ function renderGrowthCombo(){
   const byPic = groupBy(FILTERED, r=>r.pic);
   const picsInView = PIC_LIST.filter(p=>(byPic[p]||[]).length>0);
   const palette = PIC_PALETTE();
-  const pv = picsInView.map(p=> sum(byPic[p],r=>r.potentialValue));
-  const conv = picsInView.map(p=>{ const t=sum(byPic[p],r=>r.potentialValue); const f=sum(byPic[p],r=>r.fcTotal); return t>0? Math.round(f/t*1000)/10 : 0; });
+  const pv = picsInView.map(p=> sum(byPic[p],r=>r.totalPotential));
+  const conv = picsInView.map(p=>{ const t=sum(byPic[p],r=>r.totalPotential); const f=sum(byPic[p],r=>r.fcTotal); return t>0? Math.round(f/t*1000)/10 : 0; });
   destroyChart('growth');
   charts.growth = new Chart(document.getElementById('chGrowth'), {
     data:{ labels: picsInView.map(p=>PIC_NAME[p]), datasets:[
-      { type:'bar', label:'Pipeline Value (Bio VND)', data: pv, backgroundColor: picsInView.map(p=>palette[p]), borderRadius:6, maxBarThickness:46, yAxisID:'y' },
+      { type:'bar', label:'Total Potential (Bio VND)', data: pv, backgroundColor: picsInView.map(p=>palette[p]), borderRadius:6, maxBarThickness:46, yAxisID:'y' },
       { type:'line', label:'Conversion %', data: conv, borderColor: cssVar('--status-completed'), backgroundColor: (cssVar('--status-completed'))+'33', fill:true, tension:.35, pointRadius:4, borderWidth:2.5, yAxisID:'y1' }
     ]},
     options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:'bottom'} },
@@ -1858,7 +2122,7 @@ function renderGrowthCombo(){
 function renderTeamHeatmap(){
   const byPic = groupBy(FILTERED, r=>r.pic);
   const picsInView = PIC_LIST.filter(p=>(byPic[p]||[]).length>0);
-  const matrix = picsInView.map(p=> STATUS_LIST.map(s=> sum((byPic[p]||[]).filter(r=>r.statusBucket===s), r=>r.potentialValue)));
+  const matrix = picsInView.map(p=> STATUS_LIST.map(s=> sum((byPic[p]||[]).filter(r=>r.statusBucket===s), r=>r.totalPotential)));
   const max = Math.max(1, ...matrix.flat());
   const brand = [238,182,1];
   let html = '<thead><tr><th></th>' + STATUS_LIST.map(s=>`<th>${s}</th>`).join('') + '</tr></thead><tbody>';
@@ -1877,7 +2141,7 @@ function renderTeamCallouts(){
   const byPic = groupBy(FILTERED, r=>r.pic);
   const picsInView = PIC_LIST.filter(p=>(byPic[p]||[]).length>0);
   const picConv = picsInView.map(p=>{
-    const pv = sum(byPic[p],r=>r.potentialValue), fc = sum(byPic[p],r=>r.fcTotal);
+    const pv = sum(byPic[p],r=>r.totalPotential), fc = sum(byPic[p],r=>r.fcTotal);
     const delayed = (byPic[p]||[]).filter(r=>r.statusBucket==='Delayed').length;
     return {p, conv: pv>0? fc/pv*100:0, delayed};
   }).sort((a,b)=>b.conv-a.conv);
@@ -1899,15 +2163,15 @@ function renderSales(){
 
   document.getElementById('picCardsRow').innerHTML = picsInView.map(p=>{
     const rows = byPic[p]||[];
-    const pv = sum(rows,r=>r.potentialValue), fc = sum(rows,r=>r.fcTotal);
+    const pv = sum(rows,r=>r.totalPotential), fc = sum(rows,r=>r.fcTotal);
     const convv = pv>0? fc/pv*100 : 0;
     const bySector = groupBy(rows,r=>r.sector);
-    const topSector = Object.keys(bySector).sort((a,b)=> sum(bySector[b],r=>r.potentialValue)-sum(bySector[a],r=>r.potentialValue))[0]||'—';
+    const topSector = Object.keys(bySector).sort((a,b)=> sum(bySector[b],r=>r.totalPotential)-sum(bySector[a],r=>r.totalPotential))[0]||'—';
     return `<div class="card pic-card" data-pic="${p}" style="cursor:pointer">
       <div class="ph"><div class="pic-avatar" style="background:${palette[p]}">${p[0]}</div>
         <div><div style="font-weight:800;font-size:13.5px">${PIC_NAME[p]}</div><div style="font-size:10.5px;color:var(--text-3)">${rows.length} dự án active</div></div></div>
       <div class="pic-metrics">
-        <div class="m">Pipeline<b>${fmtNum(pv,1)}</b></div>
+        <div class="m">Potential<b>${fmtNum(pv,1)}</b></div>
         <div class="m">FC 2026<b>${fmtNum(fc,1)}</b></div>
         <div class="m">Conversion<b>${fmtNum(convv,0)}%</b></div>
         <div class="m">Top Sector<b>${esc(topSector)}</b></div>
@@ -1921,7 +2185,7 @@ function renderSales(){
   charts.teamBar = new Chart(document.getElementById('chTeamBar'), {
     type:'bar',
     data:{ labels: picsInView.map(p=>PIC_NAME[p]), datasets:[
-      { label:'Pipeline Value', data: picsInView.map(p=> sum(byPic[p],r=>r.potentialValue)), backgroundColor: cssVar('--brand'), borderRadius:6, maxBarThickness:44 },
+      { label:'Total Potential', data: picsInView.map(p=> sum(byPic[p],r=>r.totalPotential)), backgroundColor: cssVar('--brand'), borderRadius:6, maxBarThickness:44 },
       { label:'Forecast 2026', data: picsInView.map(p=> sum(byPic[p],r=>r.fcTotal)), backgroundColor: '#42A5F5', borderRadius:6, maxBarThickness:44 }
     ]},
     options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}}, scales:{ y:{grid:{color:'rgba(150,150,150,.1)'}}, x:{grid:{display:false}} } }
@@ -1942,15 +2206,34 @@ function renderSales(){
   const tbody = document.querySelector('#teamTable tbody');
   tbody.innerHTML = picsInView.map(p=>{
     const rows = byPic[p]||[];
-    const pv = sum(rows,r=>r.potentialValue), fc = sum(rows,r=>r.fcTotal);
+    const pv = sum(rows,r=>r.totalPotential), fc = sum(rows,r=>r.fcTotal);
     const convv = pv>0? fc/pv*100:0;
     const bySector = groupBy(rows,r=>r.sector);
-    const topSector = Object.keys(bySector).sort((a,b)=> sum(bySector[b],r=>r.potentialValue)-sum(bySector[a],r=>r.potentialValue))[0]||'—';
+    const topSector = Object.keys(bySector).sort((a,b)=> sum(bySector[b],r=>r.totalPotential)-sum(bySector[a],r=>r.totalPotential))[0]||'—';
     const byStatus = groupBy(rows,r=>r.statusBucket);
     const mix = STATUS_LIST.filter(s=>(byStatus[s]||[]).length).map(s=>`${s}:${byStatus[s].length}`).join(' · ');
     return `<tr><td><span class="pic-pill"><i style="background:${palette[p]}"></i>${PIC_NAME[p]}</span></td><td>${rows.length}</td><td>${fmtNum(pv,1)}</td><td>${fmtNum(fc,1)}</td><td>${fmtNum(convv,0)}%</td><td>${esc(topSector)}</td><td style="white-space:normal;font-size:10.5px;color:var(--text-3)">${esc(mix)}</td></tr>`;
   }).join('');
   document.getElementById('teamTableCount').textContent = picsInView.length + ' sales engineers';
+
+  renderTmRevenueChart();
+}
+/* TM Revenue by Sales PIC — bar chart, X=SalesPIC, Y=TMTotal, sorted descending
+   (sourced from the SalesPICSummary aggregation model above). */
+function renderTmRevenueChart(){
+  const palette = PIC_PALETTE();
+  const summary = buildSalesPICSummary(FILTERED).slice().sort((a,b)=> b.TMTotal - a.TMTotal);
+  destroyChart('tmRevenue');
+  charts.tmRevenue = new Chart(document.getElementById('chTmRevenue'), {
+    type:'bar',
+    data:{ labels: summary.map(s=>s.SalesPICName), datasets:[{
+      label:'TM Revenue (Bio VND)', data: summary.map(s=>s.TMTotal),
+      backgroundColor: summary.map(s=>palette[s.SalesPIC]||'#999'), borderRadius:6, maxBarThickness:52
+    }] },
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false},
+      tooltip:{ callbacks:{ label:(ctx)=> fmtNum(ctx.raw,1)+' Bio VND' } } },
+      scales:{ y:{ grid:{color:'rgba(150,150,150,.1)'}, title:{display:true,text:'Bio VND'} }, x:{ grid:{display:false} } } }
+  });
 }
 
 /* ==========================================================================
@@ -1961,14 +2244,14 @@ function renderTracker(){
   const byStatus = groupBy(FILTERED, r=>r.statusBucket);
   const board = document.getElementById('kanbanBoard');
   board.innerHTML = STATUS_LIST.map(s=>{
-    const rows = (byStatus[s]||[]).slice().sort((a,b)=>b.potentialValue-a.potentialValue);
+    const rows = (byStatus[s]||[]).slice().sort((a,b)=>b.totalPotential-a.totalPotential);
     return `<div class="card kb-col">
       <div class="kb-col-head" style="color:${colorMap[s]}"><span>${s}</span><span class="kb-count">${rows.length}</span></div>
       <div class="kb-cards">${rows.map(r=>`
         <div class="kb-card" data-id="${r.id}">
           <div class="kn">${esc(r.name)}</div>
           <div class="kmeta"><span>${esc(PIC_NAME[r.pic]||r.pic)}</span><span>${esc(r.sector)}</span></div>
-          <div class="kmeta"><span>${esc(r.location)}</span><span style="color:var(--brand);font-weight:800">${fmtNum(r.potentialValue,1)}</span></div>
+          <div class="kmeta"><span>${esc(r.location)}</span><span style="color:var(--brand);font-weight:800">${fmtNum(r.totalPotential,1)}</span></div>
           <div class="kmeta" style="margin-top:4px">${commentBadgeHtml(r.id)}</div>
         </div>`).join('') || '<div class="chart-empty" style="min-height:60px">—</div>'}</div>
     </div>`;
@@ -1977,7 +2260,7 @@ function renderTracker(){
 }
 function renderGeo(){
   const byLoc = groupBy(FILTERED, r=>r.location);
-  const items = Object.keys(byLoc).map(l=>({ name:l, value: sum(byLoc[l],r=>r.potentialValue), count: byLoc[l].length })).sort((a,b)=>b.value-a.value);
+  const items = Object.keys(byLoc).map(l=>({ name:l, value: sum(byLoc[l],r=>r.totalPotential), count: byLoc[l].length })).sort((a,b)=>b.value-a.value);
   const max = items.length? items[0].value : 1;
   const el = document.getElementById('geoList');
   el.innerHTML = items.map(it=>`<div class="geo-row"><div class="geo-name">${esc(it.name)}</div><div class="geo-bar"><i style="width:${(it.value/max*100).toFixed(1)}%"></i></div><div class="geo-val">${fmtNum(it.value,1)} <span style="color:var(--text-3);font-weight:600">(${it.count})</span></div></div>`).join('') || '<div class="chart-empty">Không có dữ liệu</div>';
@@ -1985,7 +2268,7 @@ function renderGeo(){
   const topLocs = items.slice(0,8).map(x=>x.name);
   const sectorPalette = SECTOR_PALETTE();
   const datasets = SECTOR_LIST.map(s=>({
-    label:s, data: topLocs.map(l=> sum(FILTERED.filter(r=>r.location===l && r.sector===s), r=>r.potentialValue)),
+    label:s, data: topLocs.map(l=> sum(FILTERED.filter(r=>r.location===l && r.sector===s), r=>r.totalPotential)),
     backgroundColor: sectorPalette[s], borderRadius:4, maxBarThickness:26
   })).filter(ds=> ds.data.some(v=>v>0));
   destroyChart('geoSector');
@@ -1998,16 +2281,23 @@ function renderGeo(){
 function renderRadarTab(){
   const sectorPalette = SECTOR_PALETTE();
   const bySector = groupBy(FILTERED, r=>r.sector);
-  const datasets = Object.keys(bySector).map(s=>({
-    label:s, data: bySector[s].map(r=>({ x: r.totalInvestment||0, y: r.potentialValue||0, r: Math.max(4,Math.min(28, 4+Math.sqrt(r.fcTotal||0)*2.4)), name:r.name })),
-    backgroundColor: (sectorPalette[s]||'#999')+'AA', borderColor: sectorPalette[s]||'#999', borderWidth:1.5
+  /* PROJECT ANALYSIS TAB — Potential vs Forecast bubble chart, per spec:
+     one bubble per SalesPIC (via SalesPICSummary), X=TotalPotential,
+     Y=FC_Total, bubble size=project count, bubble color=SalesPIC. */
+  const picPalette = PIC_PALETTE();
+  const summary = buildSalesPICSummary(FILTERED);
+  const maxCount = Math.max(1, ...summary.map(s=>s.projectCount));
+  const bubbleDatasets = summary.map(s=>({
+    label: s.SalesPICName,
+    data: [{ x: s.TotalPotential, y: s.FC_Total, r: Math.max(8,Math.min(38, 8+Math.sqrt(s.projectCount/maxCount)*30)), name: s.SalesPICName, count: s.projectCount }],
+    backgroundColor: (picPalette[s.SalesPIC]||'#999')+'AA', borderColor: picPalette[s.SalesPIC]||'#999', borderWidth:1.5
   }));
   destroyChart('bubble');
   charts.bubble = new Chart(document.getElementById('chBubble'), {
-    type:'bubble', data:{ datasets },
+    type:'bubble', data:{ datasets: bubbleDatasets },
     options:{ responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{position:'bottom'}, tooltip:{ callbacks:{ label:(ctx)=> `${ctx.raw.name}: Pipeline ${fmtNum(ctx.raw.y,1)}, FC~${fmtNum(Math.pow((ctx.raw.r-4)/2.4,2),1)} Bio VND` } } },
-      scales:{ x:{ title:{display:true,text:'Total Investment (Bio VND)'}, grid:{color:'rgba(150,150,150,.1)'} }, y:{ title:{display:true,text:'Pipeline Value (Bio VND)'}, grid:{color:'rgba(150,150,150,.1)'} } } }
+      plugins:{ legend:{position:'bottom'}, tooltip:{ callbacks:{ label:(ctx)=> `${ctx.raw.name}: Potential ${fmtNum(ctx.raw.x,1)}, FC ${fmtNum(ctx.raw.y,1)} Bio VND (${ctx.raw.count} dự án)` } } },
+      scales:{ x:{ title:{display:true,text:'Total Potential (Bio VND)'}, grid:{color:'rgba(150,150,150,.1)'} }, y:{ title:{display:true,text:'FC 2026 (Bio VND)'}, grid:{color:'rgba(150,150,150,.1)'} } } }
   });
 
   const compCount = {};
@@ -2022,7 +2312,7 @@ function renderRadarTab(){
     options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ x:{grid:{color:'rgba(150,150,150,.1)'},ticks:{precision:0}}, y:{grid:{display:false}} } }
   });
 
-  const sectorConv = SECTOR_LIST.map(s=>{ const rows = bySector[s]||[]; const pv=sum(rows,r=>r.potentialValue), fc=sum(rows,r=>r.fcTotal); return {s, conv: pv>0? fc/pv*100:0, pv}; })
+  const sectorConv = SECTOR_LIST.map(s=>{ const rows = bySector[s]||[]; const pv=sum(rows,r=>r.totalPotential), fc=sum(rows,r=>r.fcTotal); return {s, conv: pv>0? fc/pv*100:0, pv}; })
     .filter(x=>x.pv>0).sort((a,b)=>b.conv-a.conv);
   destroyChart('conversion');
   charts.conversion = new Chart(document.getElementById('chConversion'), {
@@ -2031,14 +2321,14 @@ function renderRadarTab(){
   });
 }
 function renderPareto(){
-  const sorted = FILTERED.slice().sort((a,b)=>b.potentialValue-a.potentialValue).slice(0,15);
-  const total = sum(FILTERED, r=>r.potentialValue) || 1;
+  const sorted = FILTERED.slice().sort((a,b)=>b.totalPotential-a.totalPotential).slice(0,15);
+  const total = sum(FILTERED, r=>r.totalPotential) || 1;
   let acc=0;
-  const cum = sorted.map(r=>{ acc+=r.potentialValue; return Math.round(acc/total*1000)/10; });
+  const cum = sorted.map(r=>{ acc+=r.totalPotential; return Math.round(acc/total*1000)/10; });
   destroyChart('pareto');
   charts.pareto = new Chart(document.getElementById('chPareto'), {
     data:{ labels: sorted.map(r=>r.name.length>18?r.name.slice(0,18)+'…':r.name), datasets:[
-      { type:'bar', label:'Pipeline Value', data: sorted.map(r=>r.potentialValue), backgroundColor: cssVar('--brand'), borderRadius:5, yAxisID:'y' },
+      { type:'bar', label:'Total Potential', data: sorted.map(r=>r.totalPotential), backgroundColor: cssVar('--brand'), borderRadius:5, yAxisID:'y' },
       { type:'line', label:'Cumulative %', data: cum, borderColor:'#FF7043', backgroundColor:'#FF704333', borderWidth:2.5, pointRadius:3, tension:.25, yAxisID:'y1' }
     ]},
     options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:'bottom'} },
@@ -2050,13 +2340,13 @@ function renderPareto(){
   });
 }
 const PIVOT_DIMS = { pic:['Sales PIC', r=>PIC_NAME[r.pic]||r.pic], sector:['Sector', r=>r.sector], status:['Status', r=>r.statusBucket], location:['Location', r=>r.location] };
-const PIVOT_METRICS = { potentialValue:['Pipeline Value (Bio VND)', r=>r.potentialValue], fcTotal:['Forecast 2026 (Bio VND)', r=>r.fcTotal], count:['# Projects', ()=>1] };
+const PIVOT_METRICS = { totalPotential:['Total Potential (Bio VND)', r=>r.totalPotential], fcTotal:['Forecast 2026 (Bio VND)', r=>r.fcTotal], count:['# Projects', ()=>1] };
 function initPivotControls(){
   const rowSel = document.getElementById('pivotRow'), colSel = document.getElementById('pivotCol'), metSel = document.getElementById('pivotMetric');
   rowSel.innerHTML = Object.keys(PIVOT_DIMS).map(k=>`<option value="${k}">${PIVOT_DIMS[k][0]}</option>`).join('');
   colSel.innerHTML = Object.keys(PIVOT_DIMS).map(k=>`<option value="${k}">${PIVOT_DIMS[k][0]}</option>`).join('');
   metSel.innerHTML = Object.keys(PIVOT_METRICS).map(k=>`<option value="${k}">${PIVOT_METRICS[k][0]}</option>`).join('');
-  rowSel.value='pic'; colSel.value='sector'; metSel.value='potentialValue';
+  rowSel.value='pic'; colSel.value='sector'; metSel.value='totalPotential';
   [rowSel,colSel,metSel].forEach(s=> s.addEventListener('change', renderPivot));
 }
 function renderPivot(){
@@ -2142,7 +2432,7 @@ function renderDbSubview(){
       <td>${r.id}</td><td title="${esc(picName)}">${esc(picName)}</td><td title="${esc(r.name)}">${esc(r.name)}</td>
       <td title="${esc(r.sector)}">${esc(r.sector)}</td><td title="${esc(r.location)}">${esc(r.location)}</td><td title="${esc(owner)}">${esc(owner)}</td>
       <td title="${esc(mc)}">${esc(mc)}</td><td title="${esc(timeline)}">${esc(timeline)}</td>
-      <td>${statusBadge(r.statusBucket)}</td><td>${fmtNum(r.potentialValue,1)}</td>
+      <td>${statusBadge(r.statusBucket)}</td><td>${fmtNum(r.totalPotential,1)}</td>
       <td>${fmtNum(r.fcTotal,1)}</td><td title="${esc(comp)}">${esc(comp)}</td>
       <td>${commentStatusBadge}</td><td style="text-align:center">${w?w.openCount:0}</td><td>${w&&w.nextDue?esc(w.nextDue):'—'}</td>
     </tr>`;
@@ -2161,7 +2451,7 @@ function renderDbSubview(){
   pag.querySelectorAll('button[data-p]').forEach(b=> b.addEventListener('click', ()=>{ dbPage=+b.getAttribute('data-p'); renderDbSubview(); }));
 }
 function exportCsv(){
-  const cols = ['id','picName','name','sector','location','owner','consultant','pmu','mainContractor','subContractor','timeline','statusBucket','stageRaw','totalInvestment','potentialValue','fcQ1','fcQ2','fcQ3','fcQ4','fcTotal','competitor','salesforceLink'];
+  const cols = ['id','picName','name','sector','location','owner','designer','consultant','pmu','mainContractor','subContractor','resellerBuyer','timeline','statusBucket','stageRaw','totalInvestment','totalPotential','opportunity2026','fcQ1','fcQ2','fcQ3','fcQ4','fcTotal','competitor','salesforceLink'];
   const header = cols.join(',');
   const lines = FILTERED.map(r=> cols.map(c=>{ let v=r[c]; if(v===null||v===undefined) v=''; v=String(v).replace(/"/g,'""'); return /[",\n]/.test(v)?`"${v}"`:v; }).join(','));
   const csv = '﻿' + [header].concat(lines).join('\r\n');
@@ -2177,7 +2467,7 @@ let _dbEventsInit=false;
 function initDbEventsOnce(){ if(_dbEventsInit) return; initDbEvents(); _dbEventsInit=true; }
 
 /* ==========================================================================
-   TAB 5 — PHÂN TÍCH SẢN PHẨM (Technology Market analysis)
+   TAB 5 — PHÂN TÍCH SẢN PHẨM (Target Market analysis)
    ========================================================================== */
 function renderProduct(){
   const rows = FILTERED;
@@ -2236,17 +2526,21 @@ function openProjectModal(id){
     <p>${esc(PIC_NAME[r.pic]||r.pic)} · ${esc(r.sector)} · ${esc(r.location)} ${statusBadge(r.statusBucket)}</p>
     ${r.salesforceLink?`<a href="${esc(r.salesforceLink)}" target="_blank" rel="noopener" class="btn primary" style="display:inline-flex;align-items:center;gap:6px;text-decoration:none;margin:4px 0 12px">☁️ Xem trên Salesforce ↗</a>`:''}
     <div class="pd-grid">
-      <div class="k">Owner / Developer</div><div class="v">${esc(r.owner||'—')}</div>
+      <div class="k">Developer / Owner</div><div class="v">${esc(r.developerOwner||r.owner||'—')}</div>
+      <div class="k">Designer</div><div class="v">${esc(r.designer||'—')}</div>
       <div class="k">Consultant</div><div class="v">${esc(r.consultant||'—')}</div>
       <div class="k">PMU</div><div class="v">${esc(r.pmu||'—')}</div>
       <div class="k">Main Contractor</div><div class="v">${esc(r.mainContractor||'—')}</div>
       <div class="k">Sub Contractor</div><div class="v">${esc(r.subContractor||'—')}</div>
+      <div class="k">Reseller / Buyer</div><div class="v">${esc(r.resellerBuyer||'—')}</div>
       <div class="k">Timeline</div><div class="v">${esc(r.timeline||'—')}</div>
       <div class="k">Stage</div><div class="v">${esc(r.stageRaw||'—')}</div>
       <div class="k">Total Investment</div><div class="v">${r.totalInvestment?fmtNum(r.totalInvestment,0)+' Bio VND':'—'}</div>
-      <div class="k">Pipeline Value</div><div class="v" style="color:var(--brand);font-weight:800">${fmtNum(r.potentialValue,1)} Bio VND</div>
+      <div class="k">Total Potential Value</div><div class="v" style="color:var(--brand);font-weight:800">${fmtNum(r.totalPotential,1)} Bio VND</div>
+      <div class="k">Opportunity 2026</div><div class="v">${r.opportunity2026?fmtNum(r.opportunity2026,1)+' Bio VND':'—'}</div>
       <div class="k">Forecast 2026</div><div class="v" style="font-weight:800">${fmtNum(r.fcTotal,1)} Bio VND</div>
-      <div class="k">Competitor</div><div class="v">${esc(r.competitor||'—')}</div>
+      <div class="k">Forecast Conversion</div><div class="v">${r.totalPotential>0?fmtNum(r.fcTotal/r.totalPotential*100,1)+'%':'—'}</div>
+      <div class="k">Competitor(s)</div><div class="v">${esc(r.competitor||'—')}</div>
       <div class="k">Product Mix</div><div class="v">${esc(r.productMix||'—')}</div>
     </div>
     ${tmEntries.length?`<div class="section-head" style="margin:8px 0 8px"><h3 style="font-size:12.5px">TM Product Breakdown</h3></div>
@@ -2322,8 +2616,75 @@ function applyShine(cfg){
   if(brand) brand.classList.toggle('shine-off', !cfg.enabled);
 }
 
+/* Background color picker — "millions of colors" via the browser's native
+   <input type="color"> (full 24-bit RGB = 16,777,216 colors). The picked
+   hex becomes the base of a 4-stop diagonal gradient (dark→mid→base→light,
+   built with color-mix so it needs no extra math) that replaces --bg-grad
+   as an inline style on <html> — inline style always wins over both the
+   dark and the light :root[data-theme] rules, so one override covers both
+   themes and survives the theme toggle. null/'' means "no override" —
+   falls back to the original brand yellow gradient defined in <style>. */
+function loadBgColor(){ try{ return localStorage.getItem(LS_BGCOLOR_KEY) || ''; }catch(e){ return ''; } }
+function saveBgColor(hex){ try{ if(hex) localStorage.setItem(LS_BGCOLOR_KEY, hex); else localStorage.removeItem(LS_BGCOLOR_KEY); }catch(e){} }
+function bgGradientFromHex(hex){
+  return `linear-gradient(135deg, color-mix(in srgb, ${hex} 60%, black 40%) 0%, color-mix(in srgb, ${hex} 85%, black 15%) 35%, ${hex} 75%, color-mix(in srgb, ${hex} 85%, white 15%) 100%)`;
+}
+function applyBgColor(hex){
+  const root = document.documentElement;
+  if(hex) root.style.setProperty('--bg-grad', bgGradientFromHex(hex));
+  else root.style.removeProperty('--bg-grad'); // falls back to the CSS-defined brand gradient
+}
+
+/* Quick-pick "White → Gray" preset swatches, shared by both color tools
+   (Màu nền and Màu khung) — a fast alternative to the full picker for the
+   specific white/gray range requested, laid out light→dark. */
+const WHITE_TO_GRAY_PRESETS = ['#FFFFFF','#F2F2F2','#E0E0E0','#CCCCCC','#B0B0B0','#909090','#707070','#505050','#303030'];
+function renderColorPresetsHtml(idPrefix){
+  return `<div class="settings-swatch-row" style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">` +
+    WHITE_TO_GRAY_PRESETS.map(hex=> `<button type="button" class="color-swatch" data-swatch="${idPrefix}" data-hex="${hex}" title="${hex}" style="width:26px;height:26px;border-radius:7px;border:1px solid var(--glass-border);background:${hex};cursor:pointer;padding:0"></button>`).join('') +
+    `</div>`;
+}
+
+/* Panel color — the second, separate color tool grouped with "Màu nền":
+   recolors every solid/near-black "glass" chrome surface (KPI/chart cards,
+   sidebar, dropdowns, table header, topbar shell, tab-bar chips) from ONE
+   picked base color, instead of the fixed near-black used everywhere by
+   default. Each target keeps its ORIGINAL alpha/opacity or light↔dark
+   gradient spread — only the hue changes — so the glass depth effect is
+   preserved, just retinted. color-mix(in srgb, hex X%, transparent) is the
+   standard way to derive an "hex at X% alpha" value in CSS; color-mix with
+   black/white builds the light/dark gradient stops for the opaque pieces
+   (topbar, tabbar chips, table header) that can't use real transparency. */
+function panelVarsFromHex(hex){
+  return {
+    '--glass-bg': `color-mix(in srgb, ${hex} 52%, transparent)`,
+    '--glass-bg-strong': `color-mix(in srgb, ${hex} 66%, transparent)`,
+    '--sidebar-bg': `color-mix(in srgb, ${hex} 78%, transparent)`,
+    '--input-bg': `color-mix(in srgb, ${hex} 32%, transparent)`,
+    '--nest-bg': `color-mix(in srgb, ${hex} 26%, transparent)`,
+    '--table-head-bg': `color-mix(in srgb, ${hex} 88%, black 12%)`,
+    '--topbar-bg': `linear-gradient(120deg, color-mix(in srgb, ${hex} 92%, black 8%) 0%, color-mix(in srgb, ${hex} 78%, black 22%) 55%, color-mix(in srgb, ${hex} 92%, black 8%) 100%)`,
+    '--tabbar-item-bg': `linear-gradient(135deg, color-mix(in srgb, ${hex} 85%, black 15%) 0%, color-mix(in srgb, ${hex} 60%, black 40%) 100%)`,
+    '--tabbar-item-hover-bg': `linear-gradient(135deg, color-mix(in srgb, ${hex} 90%, black 10%) 0%, color-mix(in srgb, ${hex} 65%, black 35%) 100%)`,
+    '--tabbar-item-active-bg': `linear-gradient(135deg, color-mix(in srgb, ${hex} 95%, black 5%) 0%, color-mix(in srgb, ${hex} 70%, black 30%) 100%)`
+  };
+}
+const PANEL_VAR_NAMES = ['--glass-bg','--glass-bg-strong','--sidebar-bg','--input-bg','--nest-bg','--table-head-bg','--topbar-bg','--tabbar-item-bg','--tabbar-item-hover-bg','--tabbar-item-active-bg'];
+function loadPanelColor(){ try{ return localStorage.getItem(LS_PANELCOLOR_KEY) || ''; }catch(e){ return ''; } }
+function savePanelColor(hex){ try{ if(hex) localStorage.setItem(LS_PANELCOLOR_KEY, hex); else localStorage.removeItem(LS_PANELCOLOR_KEY); }catch(e){} }
+function applyPanelColor(hex){
+  const root = document.documentElement;
+  if(hex){
+    const vars = panelVarsFromHex(hex);
+    Object.keys(vars).forEach(k=> root.style.setProperty(k, vars[k]));
+  } else {
+    PANEL_VAR_NAMES.forEach(k=> root.style.removeProperty(k)); // falls back to the CSS-defined defaults
+  }
+}
 function openSettingsModal(){
   const shine = loadShine();
+  const bgColor = loadBgColor();
+  const panelColor = loadPanelColor();
   const curTitle = document.getElementById('pageTitle').textContent;
   const curSubtitle = document.getElementById('pageSubtitle').textContent;
   openModal(`
@@ -2360,6 +2721,30 @@ function openSettingsModal(){
         <input type="range" id="setShineWidth" min="20" max="90" step="5" value="${shine.width}"/>
         <span class="sv" id="setShineWidthV">${shine.width}%</span>
       </div>
+    </div>
+    <div class="settings-section">
+      <h4>Màu giao diện</h4>
+      <p style="font-size:11.5px;color:var(--text-3);line-height:1.5;margin-bottom:10px">2 công cụ đổi màu riêng biệt, mỗi cái là bảng chọn màu đầy đủ (hơn 16 triệu màu). Xem trước ngay khi chọn.</p>
+      <div class="settings-field" style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        <input type="color" id="setBgColor" value="${esc(bgColor || '#EEB601')}" style="width:52px;height:40px;padding:2px;border-radius:8px;border:1px solid var(--glass-border);background:transparent;cursor:pointer"/>
+        <div style="flex:1">
+          <label style="font-size:11px;color:var(--text-3);display:block;margin-bottom:3px">Màu nền (phía sau toàn trang)</label>
+          <input type="text" id="setBgColorHex" value="${esc(bgColor)}" placeholder="Mặc định (Sika Yellow)" class="pwd-field" style="width:100%"/>
+        </div>
+        <button class="btn ghost sm" id="btnBgColorReset" type="button">↺ Mặc định</button>
+      </div>
+      <div style="font-size:10.5px;color:var(--text-3);margin:2px 0 3px">Bộ màu nhanh — Trắng → Xám</div>
+      ${renderColorPresetsHtml('bg')}
+      <div class="settings-field" style="display:flex;align-items:center;gap:10px;margin-top:14px">
+        <input type="color" id="setPanelColor" value="${esc(panelColor || '#0b0800')}" style="width:52px;height:40px;padding:2px;border-radius:8px;border:1px solid var(--glass-border);background:transparent;cursor:pointer"/>
+        <div style="flex:1">
+          <label style="font-size:11px;color:var(--text-3);display:block;margin-bottom:3px">Màu khung / thanh điều hướng (topbar, sidebar, thẻ KPI, tab)</label>
+          <input type="text" id="setPanelColorHex" value="${esc(panelColor)}" placeholder="Mặc định (đen)" class="pwd-field" style="width:100%"/>
+        </div>
+        <button class="btn ghost sm" id="btnPanelColorReset" type="button">↺ Mặc định</button>
+      </div>
+      <div style="font-size:10.5px;color:var(--text-3);margin:2px 0 3px">Bộ màu nhanh — Trắng → Xám</div>
+      ${renderColorPresetsHtml('panel')}
     </div>
     <div class="settings-section">
       <h4>Dữ liệu &amp; Máy chủ</h4>
@@ -2409,6 +2794,40 @@ function openSettingsModal(){
   }
   [speedEl, alphaEl, widthEl, onOffEl].forEach(el=> el.addEventListener('input', livePreview));
 
+  const bgColorEl = document.getElementById('setBgColor');
+  const bgColorHexEl = document.getElementById('setBgColorHex');
+  bgColorEl.addEventListener('input', ()=>{ bgColorHexEl.value = bgColorEl.value; applyBgColor(bgColorEl.value); });
+  bgColorHexEl.addEventListener('input', ()=>{
+    const v = bgColorHexEl.value.trim();
+    if(/^#[0-9a-fA-F]{6}$/.test(v)){ bgColorEl.value = v; applyBgColor(v); }
+    else if(v===''){ applyBgColor(''); }
+  });
+  document.getElementById('btnBgColorReset').addEventListener('click', ()=>{
+    bgColorHexEl.value = '';
+    bgColorEl.value = '#EEB601';
+    applyBgColor('');
+  });
+
+  const panelColorEl = document.getElementById('setPanelColor');
+  const panelColorHexEl = document.getElementById('setPanelColorHex');
+  panelColorEl.addEventListener('input', ()=>{ panelColorHexEl.value = panelColorEl.value; applyPanelColor(panelColorEl.value); });
+  panelColorHexEl.addEventListener('input', ()=>{
+    const v = panelColorHexEl.value.trim();
+    if(/^#[0-9a-fA-F]{6}$/.test(v)){ panelColorEl.value = v; applyPanelColor(v); }
+    else if(v===''){ applyPanelColor(''); }
+  });
+  document.getElementById('btnPanelColorReset').addEventListener('click', ()=>{
+    panelColorHexEl.value = '';
+    panelColorEl.value = '#0b0800';
+    applyPanelColor('');
+  });
+
+  document.querySelectorAll('.color-swatch').forEach(btn=> btn.addEventListener('click', ()=>{
+    const hex = btn.getAttribute('data-hex');
+    if(btn.getAttribute('data-swatch')==='bg'){ bgColorEl.value = hex; bgColorHexEl.value = hex; applyBgColor(hex); }
+    else{ panelColorEl.value = hex; panelColorHexEl.value = hex; applyPanelColor(hex); }
+  }));
+
   document.getElementById('btnOpenImportFromSettings').addEventListener('click', openPasswordGate);
   document.getElementById('btnOpenApiConfig').addEventListener('click', openApiConfigModal);
   document.getElementById('btnOpenUserModal').addEventListener('click', ()=> openUserModal(false));
@@ -2437,6 +2856,8 @@ function openSettingsModal(){
     const cfg = { enabled:onOffEl.checked, duration:parseFloat(speedEl.value), alpha:parseFloat(alphaEl.value), width:parseFloat(widthEl.value) };
     saveShine(cfg);
     applyShine(cfg);
+    saveBgColor(bgColorHexEl.value.trim());
+    savePanelColor(panelColorHexEl.value.trim());
     closeModal();
   });
 }
@@ -2587,16 +3008,28 @@ function parseWorkbook(wb){
       const updates={};
       months.forEach((let_,i)=>{ const v=txt(cell(row,let_)); if(v) updates[monthLabels[i]]=v; });
       rowCounter++;
+      const importedOwner = txt(cell(row,'I'));
       out.push({
-        id: 'IMP-' + importStamp + '-' + rowCounter, pic: sn, picName: sn, name,
+        /* PATCH-001: sheet name -> canonical PIC code via normalizePIC(), not the
+           raw sheet-name string (see normalizePIC() / PIC_ALIASES above). */
+        id: 'IMP-' + importStamp + '-' + rowCounter, pic: normalizePIC(sn), picName: (PIC_NAME[normalizePIC(sn)] || sn), name,
         location: txt(cell(row,'D')) || 'Unspecified',
         sector: normSector(cell(row,'H')),
-        owner: txt(cell(row,'I')), consultant: txt(cell(row,'K')), pmu: txt(cell(row,'L')),
+        owner: importedOwner, developerOwner: importedOwner,
+        /* Designer / ResellerBuyer / Opportunity2026 have no column position in
+           this legacy Excel template (only the Google Sheet "Projects" tab, this
+           turn's DATA SOURCE, defines those) — they import as empty/0 and can be
+           filled in afterwards directly in the Sheet. */
+        designer: null, resellerBuyer: null, opportunity2026: 0,
+        consultant: txt(cell(row,'K')), pmu: txt(cell(row,'L')),
         mainContractor: txt(cell(row,'M')), subContractor: txt(cell(row,'N')),
         timeline: txt(cell(row,'P')), statusRaw: txt(cell(row,'Q')), stageRaw: txt(cell(row,'R')),
         statusBucket: normStatus(cell(row,'Q'), cell(row,'R')),
         totalInvestment: numOrNull(cell(row,'F')),
-        potentialValue: num0(cell(row,'AI')),
+        /* Column AI historically held "Pipeline Value" — retained as-is
+           (unchanged Excel template position) but now labeled/used as
+           TotalPotential everywhere per the PRIMARY OBJECTIVE. */
+        totalPotential: num0(cell(row,'AI')),
         fcQ1: num0(cell(row,'AJ')), fcQ2: num0(cell(row,'AK')), fcQ3: num0(cell(row,'AL')), fcQ4: num0(cell(row,'AM')), fcTotal: num0(cell(row,'AN')),
         competitor: txt(cell(row,'AO')), productMix: txt(cell(row,'AT')), remarks: txt(cell(row,'BG')),
         salesforceLink,
@@ -2693,7 +3126,16 @@ async function apiFetch(url, opts){
     clearTimeout(timer);
     if(!res.ok) throw new Error('HTTP ' + res.status);
     const json = await res.json();
-    if(json && json.ok === false) throw new Error(json.error || 'API trả về lỗi không rõ.');
+    // PATCH-004: some deployed Code.gs variants (older turns / hand-edited
+    // copies still live on the user's actual Web App URL) reply with
+    // {success:false,...} instead of this dashboard's {ok:false,...}
+    // envelope. Only checking `ok===false` let a real server-side failure
+    // from one of those variants pass through as a silent "success" —
+    // exactly the "báo ghi thành công nhưng Sheet không đổi" symptom.
+    // Check both envelopes now; also treat an explicit ok:true/success:true
+    // as authoritative even if some other field looks off.
+    const failed = json && (json.ok === false || json.success === false);
+    if(failed) throw new Error(json.error || json.message || 'API trả về lỗi không rõ.');
     return json;
   }catch(err){
     clearTimeout(timer);
@@ -2702,51 +3144,130 @@ async function apiFetch(url, opts){
   }
 }
 
+/* PATCH-003 (FIX-004 intent restored) ======================================
+   FIX-004 originally required the dashboard to auto-resolve "Forecast 2026"
+   from whichever column name a given source used (fc2026 / FC2026 / "FC 2026"
+   / "Forecast 2026" / fcTotal) instead of hard-crashing to 0 on a mismatch.
+   The Turn 12 migration replaced that variable input with a fixed Code.gs
+   schema (FC_Total), which is more robust by construction — but it also
+   silently dropped the resolver, so a Sheet whose header was hand-renamed
+   (e.g. someone relabels the column "FC2026" directly in Google Sheets)
+   would once again show Forecast 2026 = 0 with no warning. This restores a
+   safe multi-key lookup as defense-in-depth before falling back to summing
+   the quarterly FC_Q1..Q4 columns (the same fallback the file already had). */
+function resolveForecastTotal(row, fcQ1, fcQ2, fcQ3, fcQ4){
+  const keys = ['FC_Total','FC2026','FC 2026','Forecast2026','Forecast 2026','fcTotal','fc2026'];
+  for(const k of keys){
+    if(row[k]!==undefined && row[k]!==null && row[k]!==''){ return num0(row[k]); }
+  }
+  return num0(fcQ1+fcQ2+fcQ3+fcQ4);
+}
+
+/* ==========================================================================
+   PRIMARY OBJECTIVE (this turn) — TotalPotential replaces PipelineValue
+   ==========================================================================
+   TotalPotential ("Sika business opportunity value") is now the ONLY value
+   field driving every KPI, chart, table and calculation in this dashboard.
+   PipelineValue (project investment value) is intentionally never read
+   anywhere below — resolveField() only ever looks at TotalPotential-shaped
+   keys, same multi-spelling-tolerant pattern as resolveForecastTotal()
+   above, so a Sheet header of "TotalPotential", "Total Potential" or
+   "TotalPotentialValue" all resolve correctly.
+   If your Google Sheet's "Projects" tab doesn't have a TotalPotential
+   column yet, add one (see Code.gs PROJECTS_HEADERS) — until then every
+   TotalPotential-driven KPI/chart will correctly show 0, by design, rather
+   than silently falling back to the old PipelineValue column. */
+function resolveField(row, keys){
+  for(const k of keys){
+    if(row[k]!==undefined && row[k]!==null && row[k]!==''){ return num0(row[k]); }
+  }
+  return 0;
+}
+function resolveTotalPotential(row){
+  return resolveField(row, ['TotalPotential','Total Potential','TotalPotentialValue']);
+}
+function resolveText(row, keys){
+  for(const k of keys){
+    const v = txt(row[k]);
+    if(v) return v;
+  }
+  return null;
+}
+
 /* ---------------- mapping: Google Sheet row (JSON) → internal row shape ---------------- */
 const MONTH_KEYS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 function mapApiRowToInternal(row, i){
-  const pic = String(row.SalesPIC || row.pic || '').trim() || 'Unassigned';
+  /* PATCH-001: normalize the Google Sheet's SalesPIC value too — a manager
+     hand-editing the Sheet (loadProjects() also reflects direct Sheet edits,
+     not just Excel imports, per Turn 12 docs) can retype the same rep under
+     a different spelling just as easily as an Excel sheet name can. */
+  const pic = normalizePIC(row.SalesPIC || row.pic || '') || 'Unassigned';
   const updates = {};
   MONTH_KEYS.forEach(m=>{ const v = row['Update_'+m]; if(v) updates[m] = v; });
+  /* TM_FIELDS resolution: new spec column names (TMConcreteValue, ...) take
+     priority; legacy Code.gs v1.x names (TM_Concrete, ...) are still
+     accepted so existing Sheet data doesn't silently zero out mid-migration. */
   const tm = {
-    concrete: num0(row.TM_Concrete), waterproofing: num0(row.TM_Waterproofing),
-    roofing: num0(row.TM_Roofing), flooring: num0(row.TM_Flooring),
-    buildingFinish: num0(row.TM_BuildingFinish), sealing: num0(row.TM_Sealing),
-    refurbish: num0(row.TM_Refurbish), ai: num0(row.TM_Infrastructure)
+    concrete: resolveField(row, ['TMConcreteValue','TM_Concrete']),
+    waterproofing: resolveField(row, ['TMWaterproofingValue','TM_Waterproofing']),
+    roofing: resolveField(row, ['TMRoofingValue','TM_Roofing']),
+    flooring: resolveField(row, ['TMFlooringValue','TM_Flooring']),
+    buildingFinish: resolveField(row, ['TMBuildingFinishingValue','TM_BuildingFinish']),
+    sealing: resolveField(row, ['TMSealingBondingValue','TM_Sealing']),
+    refurbish: resolveField(row, ['TMRefurbishmentValue','TM_Refurbish']),
+    ai: resolveField(row, ['TMAIValue','TM_Infrastructure'])
   };
   const fcQ1=num0(row.FC_Q1), fcQ2=num0(row.FC_Q2), fcQ3=num0(row.FC_Q3), fcQ4=num0(row.FC_Q4);
+  /* Stakeholders: DeveloperOwner is the spec's canonical name; the legacy
+     "Owner" column (Code.gs v1.x) still resolves so existing data keeps
+     working. `owner` stays as an internal alias for developerOwner so every
+     pre-existing r.owner read elsewhere in this file (tables/insights/modal)
+     keeps working unchanged. */
+  const developerOwner = resolveText(row, ['DeveloperOwner','Owner']);
   return {
     id: txt(row.ProjectID) || ('P' + (i+1)),
     pic, picName: txt(row.SalesPICName) || PIC_NAME[pic] || pic,
     name: txt(row.ProjectName) || '(Untitled project)',
     location: txt(row.Location) || 'Unspecified',
     sector: normSector(row.Sector),
-    owner: txt(row.Owner), consultant: txt(row.Consultant), pmu: txt(row.PMU),
+    owner: developerOwner, developerOwner,
+    designer: txt(row.Designer), consultant: txt(row.Consultant), pmu: txt(row.PMU),
     mainContractor: txt(row.MainContractor), subContractor: txt(row.SubContractor),
+    resellerBuyer: txt(row.ResellerBuyer),
     timeline: txt(row.Timeline), statusRaw: txt(row.Status), stageRaw: txt(row.Stage),
     statusBucket: normStatus(row.Status, row.Stage),
     totalInvestment: numOrNull(row.TotalInvestment),
-    potentialValue: num0(row.PipelineValue),
+    totalPotential: resolveTotalPotential(row),
+    opportunity2026: num0(row.Opportunity2026),
     fcQ1, fcQ2, fcQ3, fcQ4,
-    fcTotal: row.FC_Total !== undefined && row.FC_Total !== null && row.FC_Total !== '' ? num0(row.FC_Total) : num0(fcQ1+fcQ2+fcQ3+fcQ4),
-    competitor: txt(row.Competitor), productMix: txt(row.ProductMix), remarks: txt(row.Remarks),
+    fcTotal: resolveForecastTotal(row, fcQ1, fcQ2, fcQ3, fcQ4), // PATCH-003
+    competitor: resolveText(row, ['Competitors','Competitor']), productMix: txt(row.ProductMix), remarks: txt(row.Remarks),
     salesforceLink: txt(row.SalesforceLink),
     updatedBy: txt(row.UpdatedBy), updatedAt: txt(row.UpdatedAt),
     tm, updates
   };
 }
+/* Maps this dashboard's internal TM keys to the spec's canonical Sheet
+   column names (Code.gs PROJECTS_HEADERS / VALID BUSINESS FIELDS). */
+const TM_API_KEY = {
+  concrete:'TMConcreteValue', waterproofing:'TMWaterproofingValue', roofing:'TMRoofingValue',
+  flooring:'TMFlooringValue', buildingFinish:'TMBuildingFinishingValue', sealing:'TMSealingBondingValue',
+  refurbish:'TMRefurbishmentValue', ai:'TMAIValue'
+};
 function mapInternalRowToApi(r){
   const out = {
     ProjectID: r.id, ProjectName: r.name, Location: r.location, Sector: r.sector,
-    Owner: r.owner, Consultant: r.consultant, PMU: r.pmu, MainContractor: r.mainContractor,
-    SubContractor: r.subContractor, Timeline: r.timeline, Status: r.statusRaw || r.statusBucket,
+    DeveloperOwner: r.developerOwner || r.owner, Designer: r.designer, Consultant: r.consultant, PMU: r.pmu,
+    MainContractor: r.mainContractor, SubContractor: r.subContractor, ResellerBuyer: r.resellerBuyer,
+    Timeline: r.timeline, Status: r.statusRaw || r.statusBucket,
     Stage: r.stageRaw, SalesPIC: r.pic, SalesPICName: r.picName,
-    PipelineValue: r.potentialValue, FC_Q1: r.fcQ1, FC_Q2: r.fcQ2, FC_Q3: r.fcQ3, FC_Q4: r.fcQ4,
-    FC_Total: r.fcTotal, Competitor: r.competitor, Remarks: r.remarks,
+    TotalPotential: r.totalPotential, Opportunity2026: r.opportunity2026,
+    FC_Q1: r.fcQ1, FC_Q2: r.fcQ2, FC_Q3: r.fcQ3, FC_Q4: r.fcQ4,
+    FC_Total: r.fcTotal, Competitors: r.competitor, Remarks: r.remarks,
     TotalInvestment: r.totalInvestment, ProductMix: r.productMix, SalesforceLink: r.salesforceLink,
     UpdatedBy: (CURRENT_USER && CURRENT_USER.name) || 'Unknown', UpdatedAt: new Date().toISOString()
   };
-  if(r.tm) Object.keys(r.tm).forEach(k=>{ out['TM_'+k.charAt(0).toUpperCase()+k.slice(1)] = r.tm[k]; });
+  if(r.tm) Object.keys(r.tm).forEach(k=>{ if(TM_API_KEY[k]) out[TM_API_KEY[k]] = r.tm[k]; });
   if(r.updates) Object.keys(r.updates).forEach(m=>{ out['Update_'+m] = r.updates[m]; });
   return out;
 }
@@ -2789,6 +3310,7 @@ function getOpenModalProjectId(){ const box = document.querySelector('#activeMod
 function refreshOpenModalIfSame(id){ if(DATA.some(r=>String(r.id)===String(id))) openProjectModal(id); }
 
 /* ---------------- PHASE 5: Manager Comments — load ---------------- */
+let _commentsLoadFailed = false; // tracks state so we toast once on failure, once on recovery — not every 10s poll
 async function loadComments(){
   if(!apiConfigured()) return;
   try{
@@ -2797,7 +3319,14 @@ async function loadComments(){
     COMMENTS_BY_PROJECT = {};
     COMMENTS.forEach(c=>{ (COMMENTS_BY_PROJECT[c.ProjectID] = COMMENTS_BY_PROJECT[c.ProjectID] || []).push(c); });
     renderNotifBadge();
-  }catch(err){ /* comments are supplementary — a failure here must not blank the rest of the dashboard */ console.warn('loadComments failed', err); }
+    if(_commentsLoadFailed){ _commentsLoadFailed = false; showToast('✅ Đã kết nối lại — Manager Comments đang hiển thị bình thường.', 'success'); }
+  }catch(err){
+    /* comments are supplementary — a failure here must not blank the rest of the dashboard —
+       but it must NOT be silent either: a swallowed error here is exactly why "comment đã
+       thêm nhưng không hiện" could go unnoticed. Surface it once (not on every 10s poll). */
+    console.warn('loadComments failed', err);
+    if(!_commentsLoadFailed){ _commentsLoadFailed = true; showToast('⚠️ Không tải được Manager Comments từ máy chủ: ' + err.message, 'error'); }
+  }
 }
 function projectWarning(id){
   const list = (COMMENTS_BY_PROJECT[id] || []).filter(c=> c.Status !== 'Closed');
@@ -2852,7 +3381,7 @@ function showToast(msg, type){
    "write straight into localStorage" flow — the Google Sheet is now the
    only place project data is durably written).
    ========================================================================== */
-const REQUIRED_API_FIELDS = ['ProjectID','ProjectName','Location','Sector','SalesPIC','Status','PipelineValue'];
+const REQUIRED_API_FIELDS = ['ProjectID','ProjectName','Location','Sector','SalesPIC','Status','TotalPotential'];
 function validateParsedRows(rows){
   const problems = [];
   if(!rows.length) problems.push('Không có dòng dự án nào được đọc từ file.');
@@ -2911,7 +3440,7 @@ function wireCommentsSection(r){
   if(addBtn) addBtn.addEventListener('click', ()=> openAddCommentModal(r));
   document.querySelectorAll('.mc-item [data-act="reply"]').forEach(b=> b.addEventListener('click', ()=> openReplyModal(b.getAttribute('data-cid'), r.id)));
   document.querySelectorAll('.mc-item [data-act="close"]').forEach(b=> b.addEventListener('click', async ()=>{
-    try{ await closeComment(b.getAttribute('data-cid')); showToast('Đã đóng comment.', 'success'); await loadComments(); openProjectModal(r.id); }
+    try{ await closeComment(b.getAttribute('data-cid')); showToast('Đã đóng comment.', 'success'); await loadComments(); onFiltersChanged(); /* PATCH-002: refresh Kanban/table badges immediately, not just the modal */ openProjectModal(r.id); }
     catch(err){ showToast('❌ '+err.message, 'error'); }
   }));
 }
@@ -2934,6 +3463,7 @@ function openAddCommentModal(r){
       await submitComment(r.id, r.name, text, document.getElementById('cmNewPriority').value, document.getElementById('cmNewDue').value);
       showToast('✅ Đã thêm comment.', 'success');
       await loadComments();
+      onFiltersChanged(); // PATCH-002: refresh Kanban/table badges immediately, not just the modal
       openProjectModal(r.id);
     }catch(err){ msg.style.color='var(--status-delayed)'; msg.textContent = '❌ '+err.message; }
   });
@@ -2953,6 +3483,7 @@ function openReplyModal(commentId, projectId){
       await replyToComment(commentId, text);
       showToast('✅ Đã gửi trả lời.', 'success');
       await loadComments();
+      onFiltersChanged(); // PATCH-002: refresh Kanban/table badges immediately, not just the modal
       openProjectModal(projectId);
     }catch(err){ msg.style.color='var(--status-delayed)'; msg.textContent = '❌ '+err.message; }
   });
@@ -3045,14 +3576,82 @@ function openUserModal(isFirstRun){
 /* ==========================================================================
    Settings ▸ Kết nối máy chủ (Apps Script URL)
    ========================================================================== */
+/* Diagnostic helper — GETs ?action=projects and ?action=comments directly
+   against a candidate URL (bypassing apiUrl()/localStorage so it can test
+   a URL BEFORE saving it) and reports, in plain language, exactly what a
+   non-technical user needs to tell them apart:
+     - deployment unreachable (wrong/old URL, deployment deleted, or
+       "Who has access" isn't set to Anyone) → HTTP error / network error
+     - deployment reachable but still running the OLD Code.gs schema
+       (PipelineValue instead of TotalPotential) → needs "New version" redeploy
+     - deployment reachable and current → both counts print normally
+   This exists because "báo ghi thành công nhưng Sheet không đổi" and
+   "comment vô không thấy hiện" are exactly the symptoms of a stale/wrong
+   deployment URL — this button turns that into something the user can
+   verify themselves in seconds instead of guessing. */
+async function runApiDiagnostics(rawUrl){
+  const out = [];
+  let projOk=false, commOk=false, hasOldSchema=false, wrongEnvelope=false;
+  // A live deployment can reply "ok" via either this dashboard's own
+  // {ok:true/false, data, error} envelope OR an older/different Code.gs
+  // variant's {success:true/false, count, data, error} envelope — both are
+  // real shapes seen from user deployments across turns. Accept either as
+  // "reachable", but flag it when it's NOT the {ok,...} shape this
+  // dashboard's write actions (apiPost) rely on to detect failures — see
+  // PATCH-004 in apiFetch().
+  function isOk(json){ return !!json && (json.ok === true || json.success === true); }
+  function isFail(json){ return !!json && (json.ok === false || json.success === false); }
+  try{
+    const u = new URL(rawUrl); u.searchParams.set('action','projects');
+    const res = await fetch(u.toString(), { method:'GET' });
+    if(res.ok){
+      const json = await res.json();
+      if(isOk(json)){
+        projOk = true;
+        if(!('ok' in json)) wrongEnvelope = true;
+        const rows = Array.isArray(json.data) ? json.data : [];
+        let schemaTxt = 'không xác định (Sheet đang trống)';
+        if(rows[0]){
+          if('TotalPotential' in rows[0]){ schemaTxt = 'MỚI (TotalPotential) ✅'; }
+          else if('PipelineValue' in rows[0]){ schemaTxt = 'CŨ (PipelineValue) ⚠️'; hasOldSchema = true; }
+        }
+        out.push('✅ Projects: đọc được ' + rows.length + ' dự án. Schema: ' + schemaTxt + (wrongEnvelope?' — ⚠️ CODE.GS TRÊN SERVER KHÔNG PHẢI BẢN MỚI NHẤT (định dạng phản hồi khác — thiếu trường "ok")':''));
+      } else if(isFail(json)) out.push('❌ Projects: server trả lỗi — ' + (json.error || json.message || 'không rõ'));
+      else out.push('⚠️ Projects: phản hồi không đúng định dạng mong đợi — có thể Code.gs trên server là bản khác/cũ hơn nhiều so với bản đang dùng.');
+    } else out.push('❌ Projects: HTTP ' + res.status + ' — deployment không truy cập được (URL sai/cũ, deployment đã bị xoá, hoặc "Who has access" chưa để "Anyone").');
+  }catch(err){ out.push('❌ Projects: lỗi mạng — ' + err.message); }
+  try{
+    const u2 = new URL(rawUrl); u2.searchParams.set('action','comments');
+    const res2 = await fetch(u2.toString(), { method:'GET' });
+    if(res2.ok){
+      const json2 = await res2.json();
+      if(isOk(json2)){ commOk = true; if(!('ok' in json2)) wrongEnvelope = true; out.push('✅ Comments: đọc được ' + (Array.isArray(json2.data)?json2.data.length:0) + ' comment.'); }
+      else if(isFail(json2)) out.push('❌ Comments: server trả lỗi — ' + (json2.error || json2.message || 'không rõ'));
+      else out.push('⚠️ Comments: phản hồi không đúng định dạng mong đợi.');
+    } else out.push('❌ Comments: HTTP ' + res2.status + ' — deployment không truy cập được.');
+  }catch(err){ out.push('❌ Comments: lỗi mạng — ' + err.message); }
+  if(wrongEnvelope) out.push('\n👉 QUAN TRỌNG: deployment này ĐANG CHẠY nhưng KHÔNG PHẢI Code.gs bản mới nhất (phản hồi thiếu trường "ok"). Đây rất có thể là lý do "báo ghi thành công nhưng Sheet/Comment không cập nhật" — hãy dán lại Code.gs bản mới và Deploy ▸ Manage deployments ▸ Edit ▸ New version (giữ nguyên URL này).');
+  return { ok: projOk && commOk, hasOldSchema, wrongEnvelope, lines: out };
+}
 function openApiConfigModal(){
   openModal(`
     <h3>🔗 Kết nối Google Apps Script</h3>
     <p>Dán URL Web App (kết thúc bằng <code>/exec</code>) sau khi deploy Code.gs — xem hướng dẫn triển khai trong tài liệu đi kèm.</p>
     <div class="settings-field"><label>Apps Script Web App URL</label><input type="text" id="apiUrlInput" class="pwd-field" value="${esc(apiUrl()==='PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE'?'':apiUrl())}" placeholder="https://script.google.com/macros/s/AKfycb.../exec"/></div>
     <div class="pwd-msg" id="apiUrlMsg"></div>
+    <button class="btn ghost" id="apiUrlTest" style="width:100%;margin-bottom:8px">🩺 Kiểm tra kết nối</button>
+    <div id="apiUrlDiag" style="font-size:11.5px;line-height:1.6;color:var(--text-2);margin-bottom:10px;white-space:pre-wrap"></div>
     <button class="btn primary" id="apiUrlSubmit" style="width:100%">Lưu &amp; tải lại dữ liệu</button>
   `);
+  document.getElementById('apiUrlTest').addEventListener('click', async ()=>{
+    const v = document.getElementById('apiUrlInput').value.trim();
+    const diag = document.getElementById('apiUrlDiag');
+    if(!/^https:\/\/script\.google(usercontent)?\.com\//.test(v)){ diag.style.color='var(--status-delayed)'; diag.textContent='URL không hợp lệ — phải là link Web App của Apps Script.'; return; }
+    diag.style.color=''; diag.textContent='⏳ Đang kiểm tra…';
+    const r = await runApiDiagnostics(v);
+    diag.style.color = r.ok && !r.hasOldSchema && !r.wrongEnvelope ? 'var(--status-completed)' : 'var(--status-delayed)';
+    diag.textContent = r.lines.join('\n');
+  });
   document.getElementById('apiUrlSubmit').addEventListener('click', async ()=>{
     const v = document.getElementById('apiUrlInput').value.trim();
     const msg = document.getElementById('apiUrlMsg');
@@ -3071,6 +3670,8 @@ function openApiConfigModal(){
 async function init(){
   applyBrandText();
   applyShine(loadShine());
+  applyBgColor(loadBgColor());
+  applyPanelColor(loadPanelColor());
   syncHeaderHeight();
   initSettingsPanel();
   initThemeToggle();
@@ -3109,60 +3710,5 @@ function initNotifCenter(){
 }
 document.addEventListener('DOMContentLoaded', init);
 </script>
-
-const charts = {};
-
-/* ============================================================
-   UNIVERSAL DATA FIX
-   ============================================================ */
-
-function safeNum(v, d = 0){
-  c*nst n = Number(v);
-  return Number*isFinite(n) ? n : d;
-}
-
-function n*rmalizePIC(name){
-
-  if(!name) ret*rn '';
-
-  const n = String(name).t*im();
-
-  const map = {
-    'Anh Tu*n':'Tuan Nguyen',
-    'Tuan':'Tuan*Nguyen',
-    'Tuan Nguyen':'Tuan Nguyen',
-
-    'Kieu':'Bich Kieu',
-    'Bich Kieu':'Bich Kieu',
-
-    'Van':'Au Van',
-    'Au Van':'Au Van',
-
-    'Nam':'Tran Nam',
-    'Tran Nam':'Tran Nam'
-  };
-
-  return map[n] || n;
-}
-
-function getPIC(row){
-  return normalizePIC(
-    row.pic ||
-    row.picName ||
-    row.SalesPIC ||
-    row.salesPic ||
-    ''
-  );
-}
-
-/* các hàm dashboard khác */
-
-function init(){
-   ...
-}
-
-docu*ent.addEventListener('DOMContentLo*ded', init);
-
-</script>
 </body>
-</*tml>
+</html>
